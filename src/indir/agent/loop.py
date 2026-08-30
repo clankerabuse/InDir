@@ -13,7 +13,7 @@ from indir.agent.tools import (
 )
 from indir.backends.base import TOOL_DEFINITIONS, ChatBackend, ChatMessage
 from indir.config import AppConfig
-from indir.context import build_system_prompt
+from indir.context import build_system_prompt, resolve_run_command
 
 
 class EventType(str, Enum):
@@ -71,7 +71,7 @@ class AgentSession:
             return AgentEvent(type=EventType.TOOL_RESULT, content=result)
 
         if name == "run_command":
-            command = arguments.get("command", "")
+            command = resolve_run_command(self.directory, arguments.get("command", ""))
             if self.config.execution.mode == "auto":
                 cmd_result = run_command(self.directory, command, self.config.execution)
                 formatted = format_command_result(cmd_result)
@@ -157,6 +157,22 @@ class AgentSession:
     def _continue_after_tool(self) -> list[AgentEvent]:
         return self._run_loop(max_iterations=5)
 
+    @staticmethod
+    def _summarize_tool_calls(tool_calls: list) -> str:
+        parts: list[str] = []
+        for tc in tool_calls:
+            if tc.name == "run_command":
+                command = tc.arguments.get("command", "")
+                if command:
+                    parts.append(f"I'll run: {command}")
+            elif tc.name == "list_directory":
+                pattern = tc.arguments.get("pattern")
+                if pattern:
+                    parts.append(f"I'll list files matching: {pattern}")
+                else:
+                    parts.append("I'll list the directory contents.")
+        return "\n".join(parts)
+
     def send_user_message(self, text: str) -> list[AgentEvent]:
         self.messages.append(ChatMessage(role="user", content=text))
         return self._run_loop()
@@ -183,6 +199,15 @@ class AgentSession:
                         content=assistant_msg.content,
                     )
                 )
+            elif assistant_msg.tool_calls:
+                summary = self._summarize_tool_calls(assistant_msg.tool_calls)
+                if summary:
+                    events.append(
+                        AgentEvent(
+                            type=EventType.ASSISTANT_TEXT,
+                            content=summary,
+                        )
+                    )
 
             if not assistant_msg.tool_calls:
                 break

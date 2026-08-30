@@ -14,7 +14,7 @@ PROVIDERS = ("ollama", "grok", "openai", "anthropic", "cursor")
 
 # Reference defaults for sections not in use (overwritten for active provider)
 SECTION_DEFAULTS = {
-    "ollama": ("llama3.2",),
+    "ollama": ("qwen2.5:7b",),
     "openai": ("gpt-4o-mini",),
     "grok": ("grok-3",),
     "anthropic": ("claude-sonnet-4-20250514",),

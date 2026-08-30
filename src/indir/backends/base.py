@@ -48,7 +48,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "run_command",
-            "description": "Run a shell command in the working directory. Use for file conversions, renaming, etc.",
+            "description": "Run a shell command in the working directory. Quote all filenames. For conversions, prefer: command -v TOOL && TOOL ...",
             "parameters": {
                 "type": "object",
                 "properties": {

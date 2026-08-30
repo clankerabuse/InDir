@@ -10,6 +10,37 @@ from indir.config import AppConfig, OllamaConfig
 
 
 @pytest.mark.httpx_mock(assert_all_requests_were_expected=False)
+def test_agent_empty_assistant_text_gets_summary(httpx_mock, tmp_path: Path) -> None:
+    httpx_mock.add_response(
+        method="POST",
+        url="http://localhost:11434/api/chat",
+        json={
+            "message": {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "run_command",
+                            "arguments": {"command": "echo hello"},
+                        }
+                    }
+                ],
+            }
+        },
+    )
+
+    config = AppConfig()
+    backend = OllamaBackend(OllamaConfig())
+    session = AgentSession(tmp_path, config, backend)
+    events = session.send_user_message("say hello")
+
+    text = [e for e in events if e.type == EventType.ASSISTANT_TEXT]
+    assert len(text) == 1
+    assert "echo hello" in text[0].content
+
+
+@pytest.mark.httpx_mock(assert_all_requests_were_expected=False)
 def test_agent_loop_with_tool_call(httpx_mock, tmp_path: Path) -> None:
     httpx_mock.add_response(
         method="POST",

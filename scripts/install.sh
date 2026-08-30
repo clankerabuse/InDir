@@ -120,7 +120,7 @@ prompt_model() {
             echo "    1) llama3.2"
             echo "    2) llama3.1"
             echo "    3) mistral"
-            echo "    4) qwen2.5"
+            echo "    4) qwen2.5:7b  (recommended for tool use)"
             echo "    5) Enter a custom model name"
             while true; do
                 read -rp "  Enter choice (1-5): " mchoice
@@ -128,7 +128,7 @@ prompt_model() {
                     1) MODEL="llama3.2"; break ;;
                     2) MODEL="llama3.1"; break ;;
                     3) MODEL="mistral"; break ;;
-                    4) MODEL="qwen2.5"; break ;;
+                    4) MODEL="qwen2.5:7b"; break ;;
                     5)
                         read -rp "  Model name: " MODEL
                         [[ -n "$MODEL" ]] && break
