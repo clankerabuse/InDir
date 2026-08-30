@@ -19,6 +19,16 @@ warn()  { printf '\033[1;33m!\033[0m %s\n' "$*"; }
 skip()  { printf '\033[1;33m⊘\033[0m Skipped: %s\n' "$*"; }
 die()   { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Recreate .venv if it was moved/copied (broken shebangs in bin/*).
+venv_needs_recreate() {
+  [[ ! -d "$VENV_DIR" ]] && return 1
+  [[ ! -x "$VENV_DIR/bin/python" ]] && return 0
+  "$VENV_DIR/bin/python" -c 'import sys' &>/dev/null || return 0
+  [[ ! -x "$VENV_DIR/bin/pip" ]] && return 0
+  "$VENV_DIR/bin/pip" --version &>/dev/null || return 0
+  return 1
+}
+
 INTERACTIVE=1
 FORCE_CONFIG=0
 PROVIDER=""
@@ -325,6 +335,10 @@ if consent "Install application" \
     "y"; then
 
     info "Creating virtual environment..."
+    if venv_needs_recreate; then
+        warn "Existing virtual environment is unusable (project may have moved) — recreating..."
+        rm -rf "$VENV_DIR"
+    fi
     if [[ ! -d "$VENV_DIR" ]]; then
         python3 -m venv "$VENV_DIR"
     fi
@@ -409,6 +423,12 @@ fi
 
 # ── Step 6: Dolphin service menu ─────────────────────────────────────────────
 
+LEGACY_DESKTOP_FILE="${SERVICEMENU_DIR}/ai-assistant.desktop"
+if [[ -f "$LEGACY_DESKTOP_FILE" ]]; then
+    rm -f "$LEGACY_DESKTOP_FILE"
+    ok "Removed legacy Dolphin menu (ai-assistant.desktop)"
+fi
+
 if consent "Install Dolphin right-click menu" \
     "Create ${DESKTOP_FILE}
 Adds an \"InDir\" item when you right-click folders in Dolphin.
@@ -428,6 +448,7 @@ Name=InDir
 Exec=${CLI_PATH} %U
 TryExec=${CLI_PATH}
 EOF
+    chmod +x "$DESKTOP_FILE"
     ok "Dolphin menu installed"
 else
     skip "Dolphin service menu"

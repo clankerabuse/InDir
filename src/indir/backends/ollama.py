@@ -66,6 +66,16 @@ class OllamaBackend(ChatBackend):
             payload["tools"] = self._to_ollama_tools(tools)
 
         response = self.client.post("/api/chat", json=payload)
+        if response.status_code == 404:
+            try:
+                err = response.json().get("error", "")
+                if err:
+                    raise RuntimeError(
+                        f"Ollama: {err}. Run `ollama list` and set the exact model "
+                        f"name in ~/.config/indir/config.toml."
+                    ) from None
+            except (ValueError, AttributeError):
+                pass
         response.raise_for_status()
         data = response.json()
         msg = data.get("message", {})

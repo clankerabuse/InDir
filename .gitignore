@@ -5,3 +5,8 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+
+# Local secrets / config copies
+config.toml
+.env
+.env.*

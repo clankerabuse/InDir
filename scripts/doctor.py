@@ -59,6 +59,8 @@ def main() -> int:
         text = menu_path.read_text(encoding="utf-8")
         if "Exec=indir " in text and "Exec=/" not in text:
             warn("Service menu uses bare 'indir' — re-run ./install to fix")
+        if not menu_path.stat().st_mode & 0o111:
+            warn(f"Service menu not executable — run: chmod +x {menu_path}")
     else:
         fail(f"Dolphin menu missing: {SERVICEMENU_PATH}")
         errors += 1
@@ -71,11 +73,27 @@ def main() -> int:
         ok(f"Backend provider: {provider}")
 
         if provider == "ollama":
+            base_url = config.backend.ollama.base_url
+            model = config.backend.ollama.model
             try:
-                urllib.request.urlopen(
-                    f"{config.backend.ollama.base_url}/api/tags", timeout=3
-                )
-                ok(f"Ollama reachable at {config.backend.ollama.base_url}")
+                import json
+
+                with urllib.request.urlopen(f"{base_url}/api/tags", timeout=3) as resp:
+                    tags = json.loads(resp.read().decode())
+                ok(f"Ollama reachable at {base_url}")
+                installed = [m["name"] for m in tags.get("models", [])]
+                if model in installed:
+                    ok(f"Ollama model: {model}")
+                elif installed:
+                    matches = [m for m in installed if m.startswith(f"{model}:")]
+                    fail(f"Ollama model '{model}' not installed")
+                    if matches:
+                        warn(f"Did you mean '{matches[0]}'? Update model in {config_path}")
+                    else:
+                        warn(f"Installed models: {', '.join(installed)}")
+                    errors += 1
+                else:
+                    warn("No Ollama models installed — run: ollama pull <model>")
             except Exception:
                 warn("Ollama not reachable — start with: ollama serve")
         elif provider in ("grok", "openai", "anthropic", "cursor"):
