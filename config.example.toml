@@ -1,0 +1,38 @@
+[backend]
+# Choose one: ollama | grok | openai | anthropic | cursor
+provider = "grok"
+
+[backend.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.2"
+
+[backend.openai]
+api_key_env = "OPENAI_API_KEY"
+# api_key = ""   # optional inline key (works in Dolphin without env vars)
+base_url = "https://api.openai.com/v1"
+model = "gpt-4o-mini"
+
+[backend.grok]
+api_key_env = "XAI_API_KEY"
+# api_key = ""   # optional inline key (works in Dolphin without env vars)
+base_url = "https://api.x.ai/v1"
+model = "grok-3"
+
+[backend.anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+# api_key = ""   # optional inline key (works in Dolphin without env vars)
+model = "claude-sonnet-4-20250514"
+
+[backend.cursor]
+api_key_env = "CURSOR_API_KEY"
+# api_key = ""   # optional inline key (works in Dolphin without env vars)
+model = "composer-2.5"
+local_cwd = true
+
+[execution]
+mode = "confirm"   # confirm | auto
+blocklist = ["rm -rf /", "mkfs", ":(){ :|:& };:"]
+max_output_bytes = 65536
+
+[ui]
+mode = "qt"   # qt | tui

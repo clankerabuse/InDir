@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# One-command installer for InDir
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/scripts/install.sh" "$@"

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "indir"
+version = "0.1.0"
+description = "InDir — Dolphin right-click AI assistant for directory-scoped tasks"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27",
+    "PySide6>=6.6",
+    "textual>=0.80",
+]
+
+[project.optional-dependencies]
+cursor = ["cursor-sdk>=0.1.0"]
+dev = ["pytest>=8.0", "pytest-httpx>=0.30"]
+
+[project.scripts]
+indir = "indir.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/indir"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"servicemenu" = "servicemenu"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
