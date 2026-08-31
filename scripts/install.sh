@@ -345,7 +345,8 @@ if consent "Install application" \
 
     info "Installing indir..."
     "$VENV_DIR/bin/pip" install -q --upgrade pip
-    "$VENV_DIR/bin/pip" install -q -e "$PROJECT_DIR"
+    # Cursor backend is selectable in the settings UI, so install its extra always.
+    "$VENV_DIR/bin/pip" install -q -e "$PROJECT_DIR[cursor]"
     ok "Installed to ${VENV_DIR}/bin/indir"
 else
     die "Installation cancelled — application install is required"

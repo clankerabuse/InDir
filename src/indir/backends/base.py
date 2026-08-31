@@ -15,6 +15,7 @@ class ToolCall:
 class ChatMessage:
     role: str
     content: str | None = None
+    thinking: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_call_id: str | None = None
     name: str | None = None

@@ -94,10 +94,15 @@ class OllamaBackend(ChatBackend):
                 )
             )
 
+        thinking = msg.get("thinking") or None
+        if thinking is not None and not str(thinking).strip():
+            thinking = None
+
         return ChatResponse(
             message=ChatMessage(
                 role="assistant",
                 content=msg.get("content"),
+                thinking=thinking,
                 tool_calls=tool_calls,
             ),
             finish_reason="tool_calls" if tool_calls else "stop",

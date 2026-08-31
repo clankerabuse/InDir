@@ -98,10 +98,13 @@ class AnthropicBackend(ChatBackend):
         data = response.json()
 
         text_parts: list[str] = []
+        thinking_parts: list[str] = []
         tool_calls: list[ToolCall] = []
         for block in data.get("content", []):
             if block.get("type") == "text":
                 text_parts.append(block.get("text", ""))
+            elif block.get("type") == "thinking":
+                thinking_parts.append(block.get("thinking", ""))
             elif block.get("type") == "tool_use":
                 tool_calls.append(
                     ToolCall(
@@ -114,10 +117,13 @@ class AnthropicBackend(ChatBackend):
         stop_reason = data.get("stop_reason", "end_turn")
         finish_reason = "tool_calls" if tool_calls else "stop"
 
+        thinking = "\n".join(thinking_parts).strip() or None
+
         return ChatResponse(
             message=ChatMessage(
                 role="assistant",
                 content="\n".join(text_parts) if text_parts else None,
+                thinking=thinking,
                 tool_calls=tool_calls,
             ),
             finish_reason=finish_reason if tool_calls else stop_reason,

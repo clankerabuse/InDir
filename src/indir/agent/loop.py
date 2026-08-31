@@ -18,6 +18,7 @@ from indir.context import build_system_prompt, resolve_run_command
 
 class EventType(str, Enum):
     ASSISTANT_TEXT = "assistant_text"
+    THINKING = "thinking"
     TOOL_RESULT = "tool_result"
     COMMAND_PENDING = "command_pending"
     COMMAND_RESULT = "command_result"
@@ -191,6 +192,14 @@ class AgentSession:
 
             assistant_msg = response.message
             self.messages.append(assistant_msg)
+
+            if assistant_msg.thinking:
+                events.append(
+                    AgentEvent(
+                        type=EventType.THINKING,
+                        content=assistant_msg.thinking,
+                    )
+                )
 
             if assistant_msg.content:
                 events.append(

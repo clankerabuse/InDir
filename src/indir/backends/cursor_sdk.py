@@ -14,7 +14,7 @@ class CursorSDKBackend(ChatBackend):
                 f"Missing API key: set {config.api_key_env} or api_key in config"
             )
         try:
-            from cursor_sdk import Agent
+            from cursor_sdk import Agent, AgentOptions, LocalAgentOptions
         except ImportError as exc:
             raise ImportError(
                 "cursor-sdk is not installed. Install with: pip install indir[cursor]"
@@ -23,6 +23,8 @@ class CursorSDKBackend(ChatBackend):
         self.config = config
         self.directory = directory
         self._Agent = Agent
+        self._AgentOptions = AgentOptions
+        self._LocalAgentOptions = LocalAgentOptions
 
     def chat(
         self,
@@ -39,14 +41,18 @@ class CursorSDKBackend(ChatBackend):
         if system_msgs:
             prompt = f"{system_msgs[0]}\n\nUser request: {last_user}"
 
-        kwargs: dict[str, Any] = {
+        options_kwargs: dict[str, Any] = {
             "api_key": self.config.resolved_api_key(),
-            "model": {"id": self.config.model},
+            "model": self.config.model,
         }
         if self.config.local_cwd:
-            kwargs["local"] = {"cwd": str(self.directory)}
+            options_kwargs["local"] = self._LocalAgentOptions(cwd=str(self.directory))
 
-        result = self._Agent.prompt(prompt, **kwargs)
+        result = self._Agent.prompt(prompt, self._AgentOptions(**options_kwargs))
+        if getattr(result, "status", None) == "error":
+            run_id = getattr(result, "id", "unknown")
+            raise RuntimeError(f"Cursor agent run failed ({run_id})")
+
         content = getattr(result, "result", None) or str(result)
 
         return ChatResponse(

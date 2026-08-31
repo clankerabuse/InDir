@@ -87,10 +87,15 @@ class OpenAICompatBackend(ChatBackend):
                 )
             )
 
+        thinking = msg.get("reasoning_content") or msg.get("thinking") or None
+        if thinking is not None and not str(thinking).strip():
+            thinking = None
+
         return ChatResponse(
             message=ChatMessage(
                 role="assistant",
                 content=msg.get("content"),
+                thinking=thinking,
                 tool_calls=tool_calls,
             ),
             finish_reason=choice.get("finish_reason", "stop"),

@@ -155,6 +155,74 @@ def load_config(path: Path | None = None) -> AppConfig:
     return _dict_to_config(data)
 
 
+def _toml_string(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _toml_bool(value: bool) -> str:
+    return "true" if value else "false"
+
+
+def _toml_list(values: list[str]) -> str:
+    return "[" + ", ".join(_toml_string(v) for v in values) + "]"
+
+
+def config_to_toml(config: AppConfig) -> str:
+    """Serialize an AppConfig back into TOML text."""
+    backend = config.backend
+    lines = [
+        "[backend]",
+        f"provider = {_toml_string(backend.provider)}",
+        "",
+        "[backend.ollama]",
+        f"base_url = {_toml_string(backend.ollama.base_url)}",
+        f"model = {_toml_string(backend.ollama.model)}",
+        "",
+        "[backend.openai]",
+        f"api_key_env = {_toml_string(backend.openai.api_key_env)}",
+        f"api_key = {_toml_string(backend.openai.api_key)}",
+        f"base_url = {_toml_string(backend.openai.base_url)}",
+        f"model = {_toml_string(backend.openai.model)}",
+        "",
+        "[backend.grok]",
+        f"api_key_env = {_toml_string(backend.grok.api_key_env)}",
+        f"api_key = {_toml_string(backend.grok.api_key)}",
+        f"base_url = {_toml_string(backend.grok.base_url)}",
+        f"model = {_toml_string(backend.grok.model)}",
+        "",
+        "[backend.anthropic]",
+        f"api_key_env = {_toml_string(backend.anthropic.api_key_env)}",
+        f"api_key = {_toml_string(backend.anthropic.api_key)}",
+        f"model = {_toml_string(backend.anthropic.model)}",
+        "",
+        "[backend.cursor]",
+        f"api_key_env = {_toml_string(backend.cursor.api_key_env)}",
+        f"api_key = {_toml_string(backend.cursor.api_key)}",
+        f"model = {_toml_string(backend.cursor.model)}",
+        f"local_cwd = {_toml_bool(backend.cursor.local_cwd)}",
+        "",
+        "[execution]",
+        f"mode = {_toml_string(config.execution.mode)}",
+        f"blocklist = {_toml_list(config.execution.blocklist)}",
+        f"max_output_bytes = {config.execution.max_output_bytes}",
+        "",
+        "[ui]",
+        f"mode = {_toml_string(config.ui.mode)}",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def save_config(config: AppConfig, path: Path | None = None) -> Path:
+    """Write an AppConfig to disk as TOML, creating the config dir if needed."""
+    config_path = path or _resolve_config_path(None)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(config_to_toml(config), encoding="utf-8")
+    config_path.chmod(0o600)
+    return config_path
+
+
 def ensure_state_dir() -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     if STATE_DIR.exists():
