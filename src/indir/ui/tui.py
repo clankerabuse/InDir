@@ -43,17 +43,31 @@ class DirectoryAITApp(App):
         super().__init__()
         self.directory = directory
         self.config = config
-        self.backend = create_backend(config, directory)
-        self.session = AgentSession(directory, config, self.backend)
+        self.backend = None
+        self.session: AgentSession | None = None
         self._pending_tool_call_id: str | None = None
+        self._backend_error: str | None = None
+        try:
+            self.backend = create_backend(config, directory)
+            self.session = AgentSession(directory, config, self.backend)
+        except Exception as exc:
+            self._backend_error = str(exc)
 
     def compose(self) -> ComposeResult:
         yield Header()
         with VerticalScroll(id="chat-scroll"):
-            yield Static(
-                f"Working directory: {self.directory}\nTry: \"convert webm to mp4\"",
-                classes="system-msg",
-            )
+            if self._backend_error:
+                yield Static(
+                    f"Backend not ready: {self._backend_error}\n"
+                    "Configure provider/model/API key in the Qt settings UI "
+                    "(launch without --tui), then retry.",
+                    classes="error-msg",
+                )
+            else:
+                yield Static(
+                    f"Working directory: {self.directory}\nTry: \"convert webm to mp4\"",
+                    classes="system-msg",
+                )
         with Vertical(id="input-row"):
             yield Input(placeholder="Ask anything about this directory…", id="user-input")
         yield Footer()
@@ -63,6 +77,13 @@ class DirectoryAITApp(App):
             return
         text = event.value.strip()
         if not text:
+            return
+        if self.session is None:
+            self._add_message(
+                self._backend_error
+                or "Backend not configured. Use the Qt settings UI, then retry.",
+                "error-msg",
+            )
             return
         event.input.value = ""
         self._add_message(text, "user-msg")

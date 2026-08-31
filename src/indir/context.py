@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 def normalize_path(raw: str) -> Path:
-    """Convert a Dolphin URI or path string to an absolute directory Path."""
+    """Convert a file-manager URI or path string to an absolute directory Path."""
     if raw.startswith("file://"):
         from urllib.parse import unquote, urlparse
 

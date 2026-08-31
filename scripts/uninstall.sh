@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVICEMENU="${HOME}/.local/share/kio/servicemenus/indir.desktop"
 LEGACY_SERVICEMENU="${HOME}/.local/share/kio/servicemenus/ai-assistant.desktop"
 LOCAL_BIN="${HOME}/.local/bin/indir"
@@ -9,6 +10,7 @@ echo "Uninstalling indir..."
 
 [[ -f "$SERVICEMENU" ]] && rm -f "$SERVICEMENU" && echo "  Removed Dolphin menu"
 [[ -f "$LEGACY_SERVICEMENU" ]] && rm -f "$LEGACY_SERVICEMENU" && echo "  Removed legacy Dolphin menu"
+python3 "$SCRIPT_DIR/thunar_uca.py" remove
 [[ -L "$LOCAL_BIN" ]] && rm -f "$LOCAL_BIN" && echo "  Removed CLI symlink"
 
 echo ""

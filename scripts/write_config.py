@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Write or update indir config during installation."""
+"""Write a starter indir config during installation.
+
+Backend / model / API key are meant to be chosen later in the settings UI.
+This script only seeds a usable default config.toml.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +16,12 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 
 PROVIDERS = ("ollama", "grok", "openai", "anthropic", "cursor")
 
-# Reference defaults for sections not in use (overwritten for active provider)
 SECTION_DEFAULTS = {
-    "ollama": ("qwen2.5:7b",),
-    "openai": ("gpt-4o-mini",),
-    "grok": ("grok-3",),
-    "anthropic": ("claude-sonnet-4-20250514",),
-    "cursor": ("composer-2.5",),
+    "ollama": "llama3.2",
+    "openai": "gpt-4o-mini",
+    "grok": "grok-3",
+    "anthropic": "claude-sonnet-4-20250514",
+    "cursor": "composer-2.5",
 }
 
 
@@ -27,18 +30,14 @@ def _toml_string(value: str) -> str:
     return f'"{escaped}"'
 
 
-def build_config(provider: str, model: str, api_key: str = "") -> str:
-    if not model:
-        raise ValueError("model is required")
-
-    models = {
-        "ollama": SECTION_DEFAULTS["ollama"][0],
-        "openai": SECTION_DEFAULTS["openai"][0],
-        "grok": SECTION_DEFAULTS["grok"][0],
-        "anthropic": SECTION_DEFAULTS["anthropic"][0],
-        "cursor": SECTION_DEFAULTS["cursor"][0],
-    }
-    models[provider] = model
+def build_config(
+    provider: str = "ollama",
+    model: str | None = None,
+    api_key: str = "",
+) -> str:
+    models = dict(SECTION_DEFAULTS)
+    if model:
+        models[provider] = model
 
     lines = [
         "[backend]",
@@ -108,10 +107,21 @@ def build_config(provider: str, model: str, api_key: str = "") -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Write indir config")
-    parser.add_argument("--provider", choices=PROVIDERS, required=True)
-    parser.add_argument("--model", required=True, help="Model ID for the chosen provider")
-    parser.add_argument("--api-key", default="", help="Inline API key for cloud backends")
+    parser = argparse.ArgumentParser(
+        description="Write a starter indir config (backend chosen later in settings)"
+    )
+    parser.add_argument(
+        "--provider",
+        choices=PROVIDERS,
+        default="ollama",
+        help="Initial provider placeholder (default: ollama)",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Optional model override for the chosen provider",
+    )
+    parser.add_argument("--api-key", default="", help="Optional inline API key")
     parser.add_argument("--output", type=Path, default=CONFIG_PATH)
     parser.add_argument("--force", action="store_true", help="Overwrite existing config")
     args = parser.parse_args(argv)

@@ -748,8 +748,8 @@ class ChatWindow(QMainWindow):
         super().__init__()
         self.directory = directory
         self.config = config
-        self.backend = create_backend(config, directory)
-        self.session = AgentSession(directory, config, self.backend)
+        self.backend = None
+        self.session: AgentSession | None = None
         self.worker: SessionWorker | None = None
         self._pending_tool_call_id: str | None = None
         self._command_preview: CommandPreviewWidget | None = None
@@ -759,6 +759,33 @@ class ChatWindow(QMainWindow):
         self.setMinimumSize(360, 320)
         self._apply_dark_theme()
         self._build_ui()
+        if not self._try_create_backend():
+            self.status_label.setText("Open settings (gear) to choose a backend and API key.")
+
+    def _try_create_backend(self) -> bool:
+        try:
+            self.backend = create_backend(self.config, self.directory)
+            self.session = AgentSession(self.directory, self.config, self.backend)
+            return True
+        except Exception as exc:
+            self.backend = None
+            self.session = None
+            self.status_label.setText(f"Backend not ready: {exc}")
+            return False
+
+    def _require_backend(self) -> bool:
+        if self.session is not None:
+            return True
+        if self._try_create_backend():
+            return True
+        QMessageBox.information(
+            self,
+            "InDir",
+            "Configure a backend first.\n\n"
+            "Open settings (gear icon), pick a provider, and enter an API key if needed.",
+        )
+        self._open_settings()
+        return self.session is not None
 
     def _apply_dark_theme(self) -> None:
         style = """
@@ -831,9 +858,11 @@ class ChatWindow(QMainWindow):
             QPushButton#dangerButton:hover { background: #2b1620; }
 
             QToolButton#iconButton {
-                background: transparent; border: none; border-radius: 14px; padding: 0;
+                background: transparent; border: none; border-radius: 0; padding: 0;
             }
-            QToolButton#iconButton:hover { background: #1b2230; }
+            QToolButton#iconButton:hover {
+                background: transparent;
+            }
             QToolButton#revealButton {
                 background: transparent; color: #98a2b8;
                 border: 1px solid #2b3548; border-radius: 8px;
@@ -1008,8 +1037,9 @@ class ChatWindow(QMainWindow):
         settings_btn = QToolButton()
         settings_btn.setObjectName("iconButton")
         settings_btn.setIcon(QIcon(_asset("gear.svg")))
-        settings_btn.setIconSize(QSize(15, 15))
+        settings_btn.setIconSize(QSize(22, 22))
         settings_btn.setFixedSize(28, 28)
+        settings_btn.setAutoRaise(True)
         settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         settings_btn.setToolTip("Backend & model settings")
         settings_btn.clicked.connect(self._open_settings)
@@ -1104,12 +1134,14 @@ class ChatWindow(QMainWindow):
             return
         dialog = SettingsDialog(self.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            try:
-                self.backend = create_backend(self.config, self.directory)
-            except Exception as exc:
-                QMessageBox.critical(self, "InDir", f"Failed to apply new backend: {exc}")
+            if not self._try_create_backend():
+                QMessageBox.warning(
+                    self,
+                    "InDir",
+                    "Settings saved, but the backend still isn't ready.\n"
+                    "Check the provider, model, and API key, then try again.",
+                )
                 return
-            self.session = AgentSession(self.directory, self.config, self.backend)
             provider = PROVIDER_LABELS.get(self.config.backend.provider, self.config.backend.provider)
             self.status_label.setText(f"Switched to {provider}.")
 
@@ -1131,7 +1163,7 @@ class ChatWindow(QMainWindow):
         return self.worker is not None and self.worker.isRunning()
 
     def _start_worker(self, task: str, busy_message: str, **kwargs) -> None:
-        if self._worker_running():
+        if self._worker_running() or self.session is None:
             return
         self._set_busy(True, busy_message)
         self.worker = SessionWorker(task, self.session, **kwargs)
@@ -1146,6 +1178,8 @@ class ChatWindow(QMainWindow):
     def _on_send(self) -> None:
         text = self.input_box.toPlainText().strip()
         if not text or self._worker_running():
+            return
+        if not self._require_backend():
             return
         self.input_box.clear()
         self.input_box.setFixedHeight(MessageInput.MIN_HEIGHT)
@@ -1185,6 +1219,8 @@ class ChatWindow(QMainWindow):
     def _on_approve_command(self) -> None:
         if not self._pending_tool_call_id or self._worker_running():
             return
+        if not self._require_backend():
+            return
         command = self._command_preview.command_text() if self._command_preview else ""
         tool_call_id = self._pending_tool_call_id
         self._clear_approval()
@@ -1197,6 +1233,8 @@ class ChatWindow(QMainWindow):
 
     def _on_deny_command(self) -> None:
         if not self._pending_tool_call_id or self._worker_running():
+            return
+        if not self._require_backend():
             return
         tool_call_id = self._pending_tool_call_id
         self._clear_approval()

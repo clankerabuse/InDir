@@ -30,12 +30,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_doctor()
 
     parser = argparse.ArgumentParser(
-        description="InDir — Dolphin right-click AI assistant"
+        description="InDir — Dolphin/Thunar right-click AI assistant"
     )
     parser.add_argument(
         "path",
         nargs="?",
-        help="Directory path or file:// URI from Dolphin",
+        help="Directory path or file:// URI from the file manager",
     )
     parser.add_argument(
         "--tui",

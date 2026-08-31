@@ -16,6 +16,8 @@ SERVICEMENU_PATH = (
 LEGACY_SERVICEMENU_PATH = (
     Path.home() / ".local" / "share" / "kio" / "servicemenus" / "ai-assistant.desktop"
 )
+THUNAR_UCA_PATH = Path.home() / ".config" / "Thunar" / "uca.xml"
+THUNAR_UNIQUE_ID = "indir-thunar-1"
 LOCAL_BIN = Path.home() / ".local" / "bin" / "indir"
 
 
@@ -53,16 +55,39 @@ def main() -> int:
         fail(f"Config missing: {CONFIG_PATH}")
         errors += 1
 
+    dolphin_bin = shutil.which("dolphin")
     menu_path = SERVICEMENU_PATH if SERVICEMENU_PATH.exists() else LEGACY_SERVICEMENU_PATH
-    if menu_path.exists():
+    dolphin_ok = menu_path.exists()
+    if dolphin_ok:
         ok(f"Dolphin menu: {menu_path}")
         text = menu_path.read_text(encoding="utf-8")
         if "Exec=indir " in text and "Exec=/" not in text:
             warn("Service menu uses bare 'indir' — re-run ./install to fix")
         if not menu_path.stat().st_mode & 0o111:
             warn(f"Service menu not executable — run: chmod +x {menu_path}")
+    elif dolphin_bin:
+        warn(f"Dolphin menu missing: {SERVICEMENU_PATH}")
     else:
-        fail(f"Dolphin menu missing: {SERVICEMENU_PATH}")
+        warn("Dolphin not installed — skipped Dolphin menu check")
+
+    thunar_bin = shutil.which("thunar")
+    thunar_text = (
+        THUNAR_UCA_PATH.read_text(encoding="utf-8", errors="replace")
+        if THUNAR_UCA_PATH.is_file()
+        else ""
+    )
+    thunar_ok = THUNAR_UNIQUE_ID in thunar_text
+    if thunar_ok:
+        ok(f"Thunar menu: {THUNAR_UCA_PATH}")
+        if ">indir %f<" in thunar_text or ">indir %f</command>" in thunar_text:
+            warn("Thunar action uses bare 'indir' — re-run ./install to fix")
+    elif thunar_bin:
+        warn("Thunar custom action missing — re-run ./install to add it")
+    else:
+        warn("Thunar not installed — skipped Thunar menu check")
+
+    if not dolphin_ok and not thunar_ok and (dolphin_bin or thunar_bin):
+        fail("No file-manager menu installed — re-run ./install")
         errors += 1
 
     try:
@@ -86,26 +111,29 @@ def main() -> int:
                     ok(f"Ollama model: {model}")
                 elif installed:
                     matches = [m for m in installed if m.startswith(f"{model}:")]
-                    fail(f"Ollama model '{model}' not installed")
+                    warn(f"Ollama model '{model}' not installed — pick a model in settings")
                     if matches:
-                        warn(f"Did you mean '{matches[0]}'? Update model in {config_path}")
+                        warn(f"Did you mean '{matches[0]}'?")
                     else:
                         warn(f"Installed models: {', '.join(installed)}")
-                    errors += 1
                 else:
-                    warn("No Ollama models installed — run: ollama pull <model>")
+                    warn("No Ollama models installed — pull one or pick a cloud backend in settings")
             except Exception:
-                warn("Ollama not reachable — start with: ollama serve")
+                warn("Ollama not reachable — start with: ollama serve, or pick another backend in settings")
         elif provider in ("grok", "openai", "anthropic", "cursor"):
             section = getattr(config.backend, provider)
             if section.resolved_api_key():
                 ok(f"{provider} API key configured")
             else:
-                fail(f"{provider} API key missing — re-run ./install or set api_key in config")
-                errors += 1
+                warn(
+                    f"{provider} API key not set yet — open InDir settings (gear) to configure"
+                )
 
-        create_backend(config, Path.home())
-        ok("Backend initialized successfully")
+        try:
+            create_backend(config, Path.home())
+            ok("Backend initialized successfully")
+        except Exception as exc:
+            warn(f"Backend not ready yet ({exc}) — configure via settings if needed")
     except ImportError:
         warn("Package not importable — install with ./install first")
     except Exception as exc:
@@ -116,7 +144,7 @@ def main() -> int:
     if errors:
         print(f"{errors} issue(s) found.")
         return 1
-    print("All checks passed. Right-click a folder in Dolphin → InDir")
+    print("All checks passed. Right-click a folder → InDir → gear icon for backend settings")
     return 0
 
 

@@ -31,10 +31,8 @@ venv_needs_recreate() {
 
 INTERACTIVE=1
 FORCE_CONFIG=0
-PROVIDER=""
-MODEL=""
-API_KEY=""
 SKIP_DOLPHIN_RESTART=0
+SKIP_THUNAR_RESTART=0
 
 # Returns 0 if user consents (or non-interactive / -y auto-accepts).
 consent() {
@@ -69,159 +67,36 @@ usage() {
     cat <<EOF
 Usage: ./install [options]
 
-One-command setup for InDir on KDE Plasma / Arch.
+One-command setup for InDir on Arch (Dolphin and/or Thunar).
+
+Installs the app and file-manager menus. Backend, model, and API keys
+are configured later in the InDir settings UI (gear icon).
 
 Interactive mode walks you through each step and asks before making
-changes (venv, config, permissions, Dolphin menu, etc.).
+changes (venv, starter config, permissions, file-manager menus, etc.).
 
 Options:
-  -y, --yes              Skip prompts and accept all steps (requires --provider and --model)
-  --provider PROVIDER    ollama | grok | openai | anthropic | cursor
-  --model MODEL          Model ID for the chosen provider (e.g. grok-3, llama3.2, gpt-4o-mini)
-  --api-key KEY          API key for cloud backends (avoid; prefer interactive prompt)
-  --reconfigure          Overwrite existing config
+  -y, --yes              Skip prompts and accept all steps
+  --reset-config         Overwrite config with starter defaults
   --skip-dolphin-restart Don't attempt to restart Dolphin
+  --skip-thunar-restart  Don't attempt to restart Thunar
   -h, --help             Show this help
 
 Examples:
-  ./install                                    # interactive: pick backend + model
-  ./install --provider grok                      # interactive: pick model + remaining steps
-  ./install -y --provider grok --model grok-3  # non-interactive
+  ./install       # interactive
+  ./install -y    # non-interactive
 EOF
-}
-
-prompt_provider() {
-    echo ""
-    echo "  Choose your AI backend (required — no default):"
-    echo "    1) Ollama      — local, runs on your machine"
-    echo "    2) Grok (xAI)  — cloud"
-    echo "    3) OpenAI      — cloud (GPT, compatible APIs)"
-    echo "    4) Anthropic   — cloud (Claude)"
-    echo "    5) Cursor SDK  — cloud agent"
-    echo ""
-    while true; do
-        read -rp "  Enter choice (1-5): " choice
-        case "$choice" in
-            1) PROVIDER="ollama"; break ;;
-            2) PROVIDER="grok"; break ;;
-            3) PROVIDER="openai"; break ;;
-            4) PROVIDER="anthropic"; break ;;
-            5) PROVIDER="cursor"; break ;;
-            *) echo "  Please enter 1, 2, 3, 4, or 5." ;;
-        esac
-    done
-}
-
-prompt_model() {
-    echo ""
-    echo "  Choose your initial model for ${PROVIDER} (required — no default):"
-    case "$PROVIDER" in
-        ollama)
-            echo "    1) llama3.2"
-            echo "    2) llama3.1"
-            echo "    3) mistral"
-            echo "    4) qwen2.5:7b  (recommended for tool use)"
-            echo "    5) Enter a custom model name"
-            while true; do
-                read -rp "  Enter choice (1-5): " mchoice
-                case "$mchoice" in
-                    1) MODEL="llama3.2"; break ;;
-                    2) MODEL="llama3.1"; break ;;
-                    3) MODEL="mistral"; break ;;
-                    4) MODEL="qwen2.5:7b"; break ;;
-                    5)
-                        read -rp "  Model name: " MODEL
-                        [[ -n "$MODEL" ]] && break
-                        echo "  Model name cannot be empty."
-                        ;;
-                    *) echo "  Please enter 1, 2, 3, 4, or 5." ;;
-                esac
-            done
-            ;;
-        grok)
-            echo "    1) grok-3"
-            echo "    2) grok-2-1212"
-            echo "    3) Enter a custom model name"
-            while true; do
-                read -rp "  Enter choice (1-3): " mchoice
-                case "$mchoice" in
-                    1) MODEL="grok-3"; break ;;
-                    2) MODEL="grok-2-1212"; break ;;
-                    3)
-                        read -rp "  Model name: " MODEL
-                        [[ -n "$MODEL" ]] && break
-                        echo "  Model name cannot be empty."
-                        ;;
-                    *) echo "  Please enter 1, 2, or 3." ;;
-                esac
-            done
-            ;;
-        openai)
-            echo "    1) gpt-4o-mini"
-            echo "    2) gpt-4o"
-            echo "    3) gpt-4.1-mini"
-            echo "    4) Enter a custom model name"
-            while true; do
-                read -rp "  Enter choice (1-4): " mchoice
-                case "$mchoice" in
-                    1) MODEL="gpt-4o-mini"; break ;;
-                    2) MODEL="gpt-4o"; break ;;
-                    3) MODEL="gpt-4.1-mini"; break ;;
-                    4)
-                        read -rp "  Model name: " MODEL
-                        [[ -n "$MODEL" ]] && break
-                        echo "  Model name cannot be empty."
-                        ;;
-                    *) echo "  Please enter 1, 2, 3, or 4." ;;
-                esac
-            done
-            ;;
-        anthropic)
-            echo "    1) claude-sonnet-4-20250514"
-            echo "    2) claude-3-5-sonnet-20241022"
-            echo "    3) Enter a custom model name"
-            while true; do
-                read -rp "  Enter choice (1-3): " mchoice
-                case "$mchoice" in
-                    1) MODEL="claude-sonnet-4-20250514"; break ;;
-                    2) MODEL="claude-3-5-sonnet-20241022"; break ;;
-                    3)
-                        read -rp "  Model name: " MODEL
-                        [[ -n "$MODEL" ]] && break
-                        echo "  Model name cannot be empty."
-                        ;;
-                    *) echo "  Please enter 1, 2, or 3." ;;
-                esac
-            done
-            ;;
-        cursor)
-            echo "    1) composer-2.5"
-            echo "    2) Enter a custom model name"
-            while true; do
-                read -rp "  Enter choice (1-2): " mchoice
-                case "$mchoice" in
-                    1) MODEL="composer-2.5"; break ;;
-                    2)
-                        read -rp "  Model name: " MODEL
-                        [[ -n "$MODEL" ]] && break
-                        echo "  Model name cannot be empty."
-                        ;;
-                    *) echo "  Please enter 1 or 2." ;;
-                esac
-            done
-            ;;
-    esac
-    ok "Selected model: ${MODEL}"
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -y|--yes) INTERACTIVE=0; shift ;;
-        --provider) PROVIDER="$2"; shift 2 ;;
-        --model) MODEL="$2"; shift 2 ;;
-        --api-key) API_KEY="$2"; shift 2 ;;
-        --reconfigure) FORCE_CONFIG=1; shift ;;
+        --reset-config|--reconfigure) FORCE_CONFIG=1; shift ;;
         --skip-dolphin-restart) SKIP_DOLPHIN_RESTART=1; shift ;;
+        --skip-thunar-restart) SKIP_THUNAR_RESTART=1; shift ;;
+        --provider|--model|--api-key)
+            die "Backend options removed — choose provider/model/API key in the InDir settings UI after install"
+            ;;
         -h|--help) usage; exit 0 ;;
         *) die "Unknown option: $1 (try --help)" ;;
     esac
@@ -231,7 +106,7 @@ done
 
 echo ""
 echo "  InDir — installer"
-echo "  Dolphin right-click AI assistant for KDE Plasma"
+echo "  Right-click AI assistant for Dolphin and Thunar"
 echo ""
 if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
     echo "  Each step below will ask for your consent before making changes."
@@ -252,79 +127,6 @@ if [[ "$PY_MAJOR" -lt 3 ]] || [[ "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 11 ]]; the
     die "Python 3.11+ required (found ${PY_VERSION})"
 fi
 ok "Python ${PY_VERSION}"
-
-# ── backend selection ────────────────────────────────────────────────────────
-
-needs_config=0
-[[ ! -f "$CONFIG_PATH" ]] && needs_config=1
-[[ "$FORCE_CONFIG" -eq 1 ]] && needs_config=1
-
-if [[ "$needs_config" -eq 1 ]] || [[ "$FORCE_CONFIG" -eq 1 ]]; then
-    if [[ -z "$PROVIDER" ]]; then
-        if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
-            prompt_provider
-        else
-            die "No provider set. Use --provider (ollama|grok|openai|anthropic|cursor) or run interactively."
-        fi
-    fi
-
-    if [[ -z "$MODEL" ]]; then
-        if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
-            prompt_model
-        else
-            die "No model set. Use --model MODEL or run interactively."
-        fi
-    fi
-fi
-
-# ── API key (cloud backends) ─────────────────────────────────────────────────
-
-if [[ "$needs_config" -eq 1 ]] && [[ -z "$API_KEY" ]] && [[ "$PROVIDER" != "ollama" ]]; then
-    if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
-        if consent "Store API key in config file?" \
-            "Your ${PROVIDER} API key can be saved to:
-  ${CONFIG_PATH}
-The key is stored in plaintext (not encrypted).
-You will be asked separately whether to restrict file permissions (chmod 600).
-Alternatively, you can skip this and set an API key environment variable instead." \
-            "n"; then
-            echo ""
-            read -rsp "  Enter your ${PROVIDER} API key: " API_KEY
-            echo ""
-            [[ -z "$API_KEY" ]] && warn "No key entered — configure manually later"
-        else
-            warn "Skipped API key — set an env var or edit config after install"
-        fi
-    else
-        warn "No API key provided for ${PROVIDER} — set api_key in ${CONFIG_PATH} later"
-    fi
-fi
-
-# ── Ollama optional setup ────────────────────────────────────────────────────
-
-if [[ "$PROVIDER" == "ollama" ]] && [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
-    if ! command -v ollama &>/dev/null; then
-        if consent "Install Ollama via pacman?" \
-            "Ollama runs AI models locally on your machine.
-This runs: sudo pacman -S --needed ollama" \
-            "n"; then
-            sudo pacman -S --needed ollama
-        fi
-    fi
-    if command -v ollama &>/dev/null; then
-        if ! curl -sf http://localhost:11434/api/tags &>/dev/null; then
-            warn "Ollama not running — start with: ollama serve"
-        elif ! ollama list 2>/dev/null | grep -qF "${MODEL}"; then
-            if consent "Download ${MODEL} model?" \
-                "Pulls the ${MODEL} model via Ollama (size varies, may take a while).
-This runs: ollama pull ${MODEL}" \
-                "y"; then
-                info "Pulling ${MODEL}..."
-                ollama pull "${MODEL}"
-            fi
-        fi
-    fi
-fi
 
 # ── Step 1: venv + package ───────────────────────────────────────────────────
 
@@ -359,7 +161,7 @@ CLI_PATH="$VENV_DIR/bin/indir"
 if consent "Link CLI to ~/.local/bin" \
     "Create a symlink so you can run 'indir' from your terminal:
   ${LOCAL_BIN}/indir → ${CLI_PATH}
-(Dolphin uses the full path directly — this is optional for terminal use.)" \
+(File managers use the full path directly — this is optional for terminal use.)" \
     "y"; then
     mkdir -p "$LOCAL_BIN"
     ln -sf "$CLI_PATH" "${LOCAL_BIN}/indir"
@@ -387,22 +189,24 @@ Only needed if you want 'indir' available in new terminal sessions." \
     fi
 fi
 
-# ── Step 4: config file ──────────────────────────────────────────────────────
+# ── Step 4: starter config ───────────────────────────────────────────────────
+
+needs_config=0
+[[ ! -f "$CONFIG_PATH" ]] && needs_config=1
+[[ "$FORCE_CONFIG" -eq 1 ]] && needs_config=1
 
 if [[ "$needs_config" -eq 1 ]]; then
-    if consent "Write configuration file" \
-        "Create ${CONFIG_PATH}
-  Backend: ${PROVIDER}
-  Model:   ${MODEL}$([ -n "$API_KEY" ] && echo "
-  API key: (will be stored in config)" || echo "")" \
+    if consent "Write starter configuration" \
+        "Create ${CONFIG_PATH} with defaults.
+Provider, model, and API keys are set later in the InDir settings UI (gear icon)." \
         "y"; then
-        info "Writing config..."
-        WRITE_ARGS=(--provider "$PROVIDER" --model "$MODEL" --output "$CONFIG_PATH" --force)
-        [[ -n "$API_KEY" ]] && WRITE_ARGS+=(--api-key "$API_KEY")
+        info "Writing starter config..."
+        WRITE_ARGS=(--output "$CONFIG_PATH")
+        [[ "$FORCE_CONFIG" -eq 1 ]] && WRITE_ARGS+=(--force)
         python3 "$SCRIPT_DIR/write_config.py" "${WRITE_ARGS[@]}"
-        ok "Config written to ${CONFIG_PATH}"
+        ok "Starter config written to ${CONFIG_PATH}"
     else
-        skip "config file — create manually from config.example.toml"
+        skip "config file — create later from settings or config.example.toml"
     fi
 elif [[ -f "$CONFIG_PATH" ]]; then
     ok "Config already exists (${CONFIG_PATH})"
@@ -413,7 +217,7 @@ fi
 if [[ -f "$CONFIG_PATH" ]]; then
     if consent "Restrict config file permissions" \
         "Run: chmod 600 ${CONFIG_PATH}
-This makes the config readable/writable only by you (recommended if it contains an API key)." \
+Recommended once you store an API key via settings." \
         "y"; then
         chmod 600 "$CONFIG_PATH"
         ok "Config permissions set to 600 (owner only)"
@@ -455,6 +259,30 @@ else
     skip "Dolphin service menu"
 fi
 
+# ── Step 6b: Thunar custom action ────────────────────────────────────────────
+
+THUNAR_UCA="${HOME}/.config/Thunar/uca.xml"
+HAS_THUNAR=0
+command -v thunar &>/dev/null && HAS_THUNAR=1
+THUNAR_DEFAULT="n"
+[[ "$HAS_THUNAR" -eq 1 ]] && THUNAR_DEFAULT="y"
+
+THUNAR_INSTALLED=0
+if [[ "$HAS_THUNAR" -eq 0 ]] && [[ "$INTERACTIVE" -eq 0 ]]; then
+    skip "Thunar custom action (Thunar not installed)"
+elif consent "Install Thunar right-click menu" \
+    "Add an \"InDir\" custom action to:
+  ${THUNAR_UCA}
+Existing Thunar actions are left in place.
+The menu runs: ${CLI_PATH} %f" \
+    "$THUNAR_DEFAULT"; then
+    python3 "$SCRIPT_DIR/thunar_uca.py" install --cli "$CLI_PATH" --uca "$THUNAR_UCA"
+    THUNAR_INSTALLED=1
+    ok "Thunar menu installed"
+else
+    skip "Thunar custom action"
+fi
+
 # ── Step 7: restart Dolphin ──────────────────────────────────────────────────
 
 if [[ "$SKIP_DOLPHIN_RESTART" -eq 0 ]] && [[ -f "$DESKTOP_FILE" ]]; then
@@ -479,11 +307,32 @@ Your open Dolphin windows will close." \
     fi
 fi
 
+# ── Step 7b: restart Thunar ──────────────────────────────────────────────────
+
+if [[ "$SKIP_THUNAR_RESTART" -eq 0 ]] && [[ "$THUNAR_INSTALLED" -eq 1 ]]; then
+    if pgrep -x thunar &>/dev/null; then
+        if consent "Restart Thunar" \
+            "Quit Thunar so the new custom action appears.
+Open Thunar windows will close (thunar -q)." \
+            "y"; then
+            info "Restarting Thunar..."
+            thunar -q 2>/dev/null || true
+            sleep 1
+            thunar &>/dev/null &
+            disown 2>/dev/null || true
+            ok "Thunar restarted"
+        else
+            skip "Thunar restart — close and reopen Thunar manually"
+        fi
+    fi
+fi
+
 # ── Step 8: health check ─────────────────────────────────────────────────────
 
 echo ""
 if consent "Run installation health check" \
-    "Verify CLI, config, Dolphin menu, and backend connectivity." \
+    "Verify CLI, starter config, and file-manager menus.
+Backend connectivity is checked after you configure settings." \
     "y"; then
     info "Running checks..."
     "$VENV_DIR/bin/python" "$SCRIPT_DIR/doctor.py" || true
@@ -496,7 +345,7 @@ fi
 echo ""
 ok "Installation complete!"
 echo ""
-echo "  Use it:  right-click any folder in Dolphin → InDir"
+echo "  Use it:  right-click any folder in Dolphin or Thunar → InDir"
+echo "  Then:    open the gear icon → pick backend, model, and API key"
 echo "  Test:    ${CLI_PATH} ~/Downloads"
-echo "  Reconfigure:  ./install --reconfigure"
 echo ""
