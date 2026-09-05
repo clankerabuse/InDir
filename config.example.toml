@@ -1,5 +1,5 @@
 [backend]
-# Choose one: ollama | grok | openai | anthropic | cursor
+# Choose one: ollama | grok | openai | anthropic | cursor | opencode
 provider = "grok"
 
 [backend.ollama]
@@ -28,6 +28,18 @@ api_key_env = "CURSOR_API_KEY"
 # api_key = ""   # optional inline key (works from file managers without env vars)
 model = "composer-2.5"
 local_cwd = true
+
+[backend.opencode]
+# OpenCode Zen/Go gateway — get a key at https://opencode.ai/auth
+# The gateway accepts its whole model catalog (Kimi, GLM, DeepSeek, MiniMax,
+# Claude, GPT, ...) via the OpenAI chat/completions format.
+# InDir's settings dialog auto-detects Go vs Zen from your key.
+api_key_env = "OPENCODE_API_KEY"
+# api_key = ""   # optional inline key (works in Dolphin without env vars)
+# Zen pay-per-use: https://opencode.ai/zen/v1
+# Go subscription:  https://opencode.ai/zen/go/v1
+base_url = "https://opencode.ai/zen/v1"
+model = "kimi-k2.6"
 
 [execution]
 mode = "confirm"   # confirm | auto

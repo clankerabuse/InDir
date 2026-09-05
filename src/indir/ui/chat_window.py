@@ -35,17 +35,25 @@ from PySide6.QtWidgets import (
 )
 
 from indir.agent.loop import AgentEvent, AgentSession, EventType
-from indir.backends.model_catalog import list_models
+from indir.backends.base import ChatBackend
+from indir.backends.model_catalog import (
+    OPENCODE_GO_BASE_URL,
+    OPENCODE_ZEN_BASE_URL,
+    detect_opencode_base_url,
+    list_models,
+    list_opencode_models,
+)
 from indir.backends.registry import create_backend
 from indir.config import AppConfig, save_config
 
-PROVIDERS = ("ollama", "openai", "grok", "anthropic", "cursor")
+PROVIDERS = ("ollama", "openai", "grok", "anthropic", "cursor", "opencode")
 PROVIDER_LABELS = {
     "ollama": "Ollama (local)",
     "openai": "OpenAI",
     "grok": "Grok (xAI)",
     "anthropic": "Anthropic",
     "cursor": "Cursor",
+    "opencode": "OpenCode (Zen/Go)",
 }
 
 ASSETS_DIR = Path(__file__).resolve().parent / "assets"
@@ -73,6 +81,27 @@ class ModelFetchWorker(QThread):
             if not models:
                 raise ValueError("No models were returned.")
             self.succeeded.emit(models)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+
+
+class OpenCodeSetupWorker(QThread):
+    """Detects the OpenCode gateway (Go vs Zen) and loads models off the UI thread."""
+
+    succeeded = Signal(str, list)
+    failed = Signal(str)
+
+    def __init__(self, api_key: str) -> None:
+        super().__init__()
+        self.api_key = api_key
+
+    def run(self) -> None:
+        try:
+            base_url = detect_opencode_base_url(self.api_key)
+            models = list_opencode_models(base_url, self.api_key)
+            if not models:
+                raise ValueError("No models were returned.")
+            self.succeeded.emit(base_url, models)
         except Exception as exc:
             self.failed.emit(str(exc))
 
@@ -509,6 +538,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.config = config
         self.fetch_worker: ModelFetchWorker | None = None
+        self.setup_worker: OpenCodeSetupWorker | None = None
         self._fetch_debounce = QTimer(self)
         self._fetch_debounce.setSingleShot(True)
         self._fetch_debounce.setInterval(500)
@@ -599,15 +629,18 @@ class SettingsDialog(QDialog):
     def _has_credentials(self, provider: str) -> bool:
         if provider == "ollama":
             return bool(self.base_url_edit.text().strip())
-        if provider in ("openai", "grok", "anthropic", "cursor"):
+        if provider in ("openai", "grok", "anthropic", "cursor", "opencode"):
             return bool(self.api_key_edit.text().strip())
         return False
 
     def _reset_model_dropdown(self, saved_model: str = "") -> None:
         """Disable the model dropdown and show a placeholder until models are fetched."""
         self.model_combo.clear()
-        if self._current_provider() == "ollama":
+        provider = self._current_provider()
+        if provider == "ollama":
             placeholder = "Enter a base URL, then fetch models"
+        elif provider == "opencode":
+            placeholder = "Paste your OpenCode key — the rest is automatic"
         else:
             placeholder = "Enter an API key to load models"
         self.model_combo.addItem(placeholder)
@@ -617,8 +650,8 @@ class SettingsDialog(QDialog):
     def _load_provider_fields(self) -> None:
         provider = self._current_provider()
         backend = self.config.backend
-        has_base_url = provider in ("ollama", "openai", "grok")
-        has_api_key = provider in ("openai", "grok", "anthropic", "cursor")
+        has_base_url = provider in ("ollama", "openai", "grok", "opencode")
+        has_api_key = provider in ("openai", "grok", "anthropic", "cursor", "opencode")
 
         self.base_url_row_label.setVisible(has_base_url)
         self.base_url_edit.setVisible(has_base_url)
@@ -645,6 +678,10 @@ class SettingsDialog(QDialog):
         elif provider == "cursor":
             saved_model = backend.cursor.model
             self.api_key_edit.setText(backend.cursor.api_key)
+        elif provider == "opencode":
+            saved_model = backend.opencode.model
+            self.base_url_edit.setText(backend.opencode.base_url)
+            self.api_key_edit.setText(backend.opencode.api_key)
 
         self._reset_model_dropdown(saved_model)
         if self._has_credentials(provider):
@@ -669,6 +706,8 @@ class SettingsDialog(QDialog):
     def _on_fetch_models(self) -> None:
         if self.fetch_worker is not None and self.fetch_worker.isRunning():
             return
+        if self.setup_worker is not None and self.setup_worker.isRunning():
+            return
         provider = self._current_provider()
         if not self._has_credentials(provider):
             return
@@ -677,13 +716,42 @@ class SettingsDialog(QDialog):
 
         self.fetch_models_btn.setEnabled(False)
         self.fetch_status_label.setStyleSheet("color: #8290a3;")
-        self.fetch_status_label.setText("Fetching models…")
 
+        # OpenCode: detect Go vs Zen from the key itself, unless the user
+        # pointed the base URL at a custom endpoint.
+        if provider == "opencode" and base_url in (
+            "",
+            OPENCODE_ZEN_BASE_URL,
+            OPENCODE_GO_BASE_URL,
+        ):
+            self.fetch_status_label.setText("Detecting OpenCode gateway…")
+            self.setup_worker = OpenCodeSetupWorker(api_key)
+            self.setup_worker.succeeded.connect(self._on_opencode_setup_succeeded)
+            self.setup_worker.failed.connect(self._on_fetch_failed)
+            self.setup_worker.finished.connect(
+                lambda: self.fetch_models_btn.setEnabled(True)
+            )
+            self.setup_worker.start()
+            return
+
+        self.fetch_status_label.setText("Fetching models…")
         self.fetch_worker = ModelFetchWorker(provider, base_url, api_key)
         self.fetch_worker.succeeded.connect(self._on_fetch_succeeded)
         self.fetch_worker.failed.connect(self._on_fetch_failed)
         self.fetch_worker.finished.connect(lambda: self.fetch_models_btn.setEnabled(True))
         self.fetch_worker.start()
+
+    def _on_opencode_setup_succeeded(self, base_url: str, models: list[str]) -> None:
+        # Reflect the detected gateway without re-triggering the fetch debounce.
+        self.base_url_edit.blockSignals(True)
+        self.base_url_edit.setText(base_url)
+        self.base_url_edit.blockSignals(False)
+        self._on_fetch_succeeded(models)
+        if base_url == OPENCODE_GO_BASE_URL:
+            plan = "OpenCode Go (subscription)"
+        else:
+            plan = "OpenCode Zen (pay-per-use)"
+        self.fetch_status_label.setText(f"{plan} — found {len(models)} model(s).")
 
     def _on_fetch_succeeded(self, models: list[str]) -> None:
         pending = getattr(self, "_pending_model", "")
@@ -727,6 +795,10 @@ class SettingsDialog(QDialog):
         elif provider == "cursor":
             backend.cursor.model = model
             backend.cursor.api_key = self.api_key_edit.text().strip()
+        elif provider == "opencode":
+            backend.opencode.model = model
+            backend.opencode.base_url = self.base_url_edit.text().strip() or backend.opencode.base_url
+            backend.opencode.api_key = self.api_key_edit.text().strip()
 
         try:
             save_config(self.config)
@@ -737,9 +809,10 @@ class SettingsDialog(QDialog):
         self.accept()
 
     def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if self.fetch_worker is not None and self.fetch_worker.isRunning():
-            self.fetch_worker.requestInterruption()
-            self.fetch_worker.wait(2000)
+        for worker in (self.fetch_worker, self.setup_worker):
+            if worker is not None and worker.isRunning():
+                worker.requestInterruption()
+                worker.wait(2000)
         super().closeEvent(event)
 
 
@@ -750,6 +823,14 @@ class ChatWindow(QMainWindow):
         self.config = config
         self.backend = None
         self.session: AgentSession | None = None
+        self._backend_error: str | None = None
+        try:
+            self.backend = create_backend(config, directory)
+            self.session = AgentSession(directory, config, self.backend)
+        except Exception as exc:
+            # Never block the UI on a missing key — the user configures the
+            # backend from the settings dialog after the window is up.
+            self._backend_error = str(exc)
         self.worker: SessionWorker | None = None
         self._pending_tool_call_id: str | None = None
         self._command_preview: CommandPreviewWidget | None = None
@@ -760,24 +841,49 @@ class ChatWindow(QMainWindow):
         self._apply_dark_theme()
         self._build_ui()
         if not self._try_create_backend():
-            self.status_label.setText("Open settings (gear) to choose a backend and API key.")
+            self._refresh_backend_state()
+
+    def _refresh_backend_state(self) -> None:
+        """Enable/disable the composer based on whether a backend is usable."""
+        ready = self.session is not None
+        self.input_box.setEnabled(ready)
+        self.send_btn.setEnabled(ready)
+        if ready:
+            self.input_box.setPlaceholderText("Ask about this folder…")
+            provider = PROVIDER_LABELS.get(
+                self.config.backend.provider, self.config.backend.provider
+            )
+            self.status_label.setText(
+                f"{provider} · Enter to send · Shift+Enter for newline"
+            )
+        else:
+            self.input_box.setPlaceholderText("Set up a backend first (gear icon, top right)")
+            self.status_label.setText("No backend configured yet")
+            self.message_panel.set_assistant_text(
+                "Welcome to InDir! No backend is configured yet.\n\n"
+                "Click the gear icon in the top right, pick a provider, "
+                "paste your API key, and press Save."
+            )
 
     def _try_create_backend(self) -> bool:
         try:
             self.backend = create_backend(self.config, self.directory)
             self.session = AgentSession(self.directory, self.config, self.backend)
+            self._backend_error = None
             return True
         except Exception as exc:
             self.backend = None
             self.session = None
-            self.status_label.setText(f"Backend not ready: {exc}")
+            self._backend_error = str(exc)
             return False
 
     def _require_backend(self) -> bool:
         if self.session is not None:
             return True
         if self._try_create_backend():
+            self._refresh_backend_state()
             return True
+        self._refresh_backend_state()
         QMessageBox.information(
             self,
             "InDir",
@@ -1095,6 +1201,28 @@ class ChatWindow(QMainWindow):
         layout.addWidget(self.status_label)
         self.input_box.setFocus()
 
+    def _refresh_backend_state(self) -> None:
+        """Enable/disable the composer based on whether a backend is usable."""
+        ready = self.session is not None
+        self.input_box.setEnabled(ready)
+        self.send_btn.setEnabled(ready)
+        if ready:
+            self.input_box.setPlaceholderText("Ask about this folder…")
+            provider = PROVIDER_LABELS.get(
+                self.config.backend.provider, self.config.backend.provider
+            )
+            self.status_label.setText(
+                f"{provider} · Enter to send · Shift+Enter for newline"
+            )
+        else:
+            self.input_box.setPlaceholderText("Set up a backend first (gear icon, top right)")
+            self.status_label.setText("No backend configured yet")
+            self.message_panel.set_assistant_text(
+                "Welcome to InDir! No backend is configured yet.\n\n"
+                "Click the gear icon in the top right, pick a provider, "
+                "paste your API key, and press Save."
+            )
+
     def _append_background(self, heading: str, body: str) -> None:
         self.message_panel.append_thinking(f"{heading}\n{body.strip()}")
 
@@ -1135,6 +1263,7 @@ class ChatWindow(QMainWindow):
         dialog = SettingsDialog(self.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if not self._try_create_backend():
+                self._refresh_backend_state()
                 QMessageBox.warning(
                     self,
                     "InDir",
@@ -1142,6 +1271,7 @@ class ChatWindow(QMainWindow):
                     "Check the provider, model, and API key, then try again.",
                 )
                 return
+            self._refresh_backend_state()
             provider = PROVIDER_LABELS.get(self.config.backend.provider, self.config.backend.provider)
             self.status_label.setText(f"Switched to {provider}.")
 
@@ -1314,6 +1444,8 @@ def run_qt_ui(directory: Path, config: AppConfig) -> int:
         ["Inter", "SF Pro Text", "Segoe UI", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"]
     )
     app.setFont(font)
+    # ChatWindow always opens — an unconfigured backend only disables the
+    # composer and points the user at the settings dialog.
     try:
         window = ChatWindow(directory, config)
     except Exception as exc:

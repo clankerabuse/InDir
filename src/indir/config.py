@@ -70,6 +70,19 @@ class CursorConfig:
 
 
 @dataclass
+class OpenCodeConfig:
+    api_key_env: str = "OPENCODE_API_KEY"
+    api_key: str = ""
+    # Zen pay-per-use: https://opencode.ai/zen/v1
+    # Go subscription:  https://opencode.ai/zen/go/v1
+    base_url: str = "https://opencode.ai/zen/v1"
+    model: str = "kimi-k2.6"
+
+    def resolved_api_key(self) -> str | None:
+        return _resolve_api_key(self.api_key, self.api_key_env)
+
+
+@dataclass
 class BackendConfig:
     provider: str = "ollama"
     ollama: OllamaConfig = field(default_factory=OllamaConfig)
@@ -77,6 +90,7 @@ class BackendConfig:
     grok: GrokConfig = field(default_factory=GrokConfig)
     anthropic: AnthropicConfig = field(default_factory=AnthropicConfig)
     cursor: CursorConfig = field(default_factory=CursorConfig)
+    opencode: OpenCodeConfig = field(default_factory=OpenCodeConfig)
 
 
 @dataclass
@@ -123,6 +137,7 @@ def _dict_to_config(data: dict) -> AppConfig:
             grok=GrokConfig(**backend_data.get("grok", {})),
             anthropic=AnthropicConfig(**backend_data.get("anthropic", {})),
             cursor=CursorConfig(**backend_data.get("cursor", {})),
+            opencode=OpenCodeConfig(**backend_data.get("opencode", {})),
         ),
         execution=ExecutionConfig(
             mode=execution_data.get("mode", "confirm"),
@@ -201,6 +216,12 @@ def config_to_toml(config: AppConfig) -> str:
         f"api_key = {_toml_string(backend.cursor.api_key)}",
         f"model = {_toml_string(backend.cursor.model)}",
         f"local_cwd = {_toml_bool(backend.cursor.local_cwd)}",
+        "",
+        "[backend.opencode]",
+        f"api_key_env = {_toml_string(backend.opencode.api_key_env)}",
+        f"api_key = {_toml_string(backend.opencode.api_key)}",
+        f"base_url = {_toml_string(backend.opencode.base_url)}",
+        f"model = {_toml_string(backend.opencode.model)}",
         "",
         "[execution]",
         f"mode = {_toml_string(config.execution.mode)}",

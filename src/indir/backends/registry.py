@@ -22,4 +22,6 @@ def create_backend(config: AppConfig, directory: Path) -> ChatBackend:
         return AnthropicBackend(config.backend.anthropic)
     if provider == "cursor":
         return CursorSDKBackend(config.backend.cursor, directory)
+    if provider == "opencode":
+        return OpenAICompatBackend(config.backend.opencode)
     raise ValueError(f"Unknown backend provider: {provider}")

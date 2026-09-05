@@ -22,7 +22,7 @@ That's it. The installer walks you through each step and **asks before making ch
 
 - **File manager integration** — "InDir" appears in the right-click menu for directories in Dolphin (Plasma 6) and Thunar
 - **Persistent chat window** — multi-turn conversation scoped to the selected directory
-- **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, optional Cursor SDK — set via the gear icon
+- **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
 - **Safe command execution** — confirm-before-run by default; optional auto-run mode
 - **Non-blocking UI** — long commands like ffmpeg run in the background
 - **Terminal UI** — optional Textual TUI via `--tui` or `ui.mode = "tui"` in config
@@ -83,6 +83,12 @@ model = "grok-3"
 ```
 
 Or use environment variables (`XAI_API_KEY`, `OPENAI_API_KEY`, etc.).
+
+Using **OpenCode Zen/Go**? Set `provider = "opencode"` and paste your key from
+[opencode.ai/auth](https://opencode.ai/auth) — the settings dialog auto-detects
+whether your key is a Go subscription or Zen pay-per-use and loads the matching
+model list. The gateway serves its whole catalog (Kimi, GLM, DeepSeek, MiniMax,
+Claude, GPT, ...) over the OpenAI-compatible endpoint.
 
 See [config.example.toml](config.example.toml) for all options.
 

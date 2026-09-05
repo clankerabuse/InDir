@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from indir.agent.tools import is_command_blocked, list_directory, run_command
-from indir.config import ExecutionConfig, load_config
+from indir.config import ExecutionConfig, load_config, save_config
 from indir.context import (
     build_directory_summary,
     build_suggested_commands,
@@ -63,6 +63,46 @@ def test_load_config_defaults() -> None:
     config = load_config(Path("/nonexistent/config.toml"))
     assert config.backend.provider == "ollama"
     assert config.execution.mode == "confirm"
+
+
+def test_opencode_config_round_trip(tmp_path: Path) -> None:
+    config = load_config(Path("/nonexistent/config.toml"))
+    config.backend.provider = "opencode"
+    config.backend.opencode.api_key = "oc-test-key"
+    config.backend.opencode.model = "glm-5.3"
+
+    path = save_config(config, tmp_path / "config.toml")
+    loaded = load_config(path)
+
+    assert loaded.backend.provider == "opencode"
+    assert loaded.backend.opencode.api_key == "oc-test-key"
+    assert loaded.backend.opencode.model == "glm-5.3"
+    assert loaded.backend.opencode.base_url == "https://opencode.ai/zen/v1"
+    assert loaded.backend.opencode.resolved_api_key() == "oc-test-key"
+
+
+def test_create_backend_opencode(tmp_path: Path) -> None:
+    from indir.backends.openai_compat import OpenAICompatBackend
+    from indir.backends.registry import create_backend
+
+    config = load_config(Path("/nonexistent/config.toml"))
+    config.backend.provider = "opencode"
+    config.backend.opencode.api_key = "oc-test-key"
+
+    backend = create_backend(config, tmp_path)
+    assert isinstance(backend, OpenAICompatBackend)
+    assert backend.config.model == "kimi-k2.6"
+
+
+def test_create_backend_opencode_requires_key(tmp_path: Path, monkeypatch) -> None:
+    from indir.backends.registry import create_backend
+
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    config = load_config(Path("/nonexistent/config.toml"))
+    config.backend.provider = "opencode"
+
+    with pytest.raises(ValueError, match="API key"):
+        create_backend(config, tmp_path)
 
 
 def test_is_command_blocked() -> None:

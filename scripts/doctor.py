@@ -120,7 +120,7 @@ def main() -> int:
                     warn("No Ollama models installed — pull one or pick a cloud backend in settings")
             except Exception:
                 warn("Ollama not reachable — start with: ollama serve, or pick another backend in settings")
-        elif provider in ("grok", "openai", "anthropic", "cursor"):
+        elif provider in ("grok", "openai", "anthropic", "cursor", "opencode"):
             section = getattr(config.backend, provider)
             if section.resolved_api_key():
                 ok(f"{provider} API key configured")
