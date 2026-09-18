@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTextEdit,
     QToolButton,
@@ -330,7 +331,7 @@ class ThinkingBubble(QWidget):
 
 
 class SpeechBubble(QLabel):
-    """Compact iMessage-style bubble for the last user or assistant line."""
+    """Compact iMessage-style bubble for a user or assistant message."""
 
     def __init__(self, role: str, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -338,7 +339,7 @@ class SpeechBubble(QLabel):
         self.setObjectName("userBubble" if role == "user" else "assistantBubble")
         self.setWordWrap(True)
         self.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.setMaximumWidth(300)
+        self.setMaximumWidth(320)
 
         self._opacity = QGraphicsOpacityEffect(self)
         self._opacity.setOpacity(1.0)
@@ -351,7 +352,7 @@ class SpeechBubble(QLabel):
 
         self.hide()
 
-    def set_text(self, text: str, *, error: bool = False) -> None:
+    def set_text(self, text: str, *, error: bool = False, animate: bool = True) -> None:
         if not text.strip():
             self.clear()
             self.hide()
@@ -365,7 +366,7 @@ class SpeechBubble(QLabel):
         self.style().unpolish(self)
         self.style().polish(self)
         self.show()
-        if was_hidden:
+        if animate and was_hidden:
             self._fade.stop()
             self._fade.start()
 
@@ -387,7 +388,7 @@ class ContentTabButton(QPushButton):
 
 
 class ConversationPanel(QFrame):
-    """Chrome-style panel: optional thinking log up top, speech bubbles above the composer."""
+    """Chrome-style panel: scrollable chat history, optional thinking log, composer below."""
 
     TAB_CHAT = 0
     TAB_THINKING = 1
@@ -400,6 +401,8 @@ class ConversationPanel(QFrame):
     ) -> None:
         super().__init__(parent)
         self.setObjectName("contentPanel")
+        self._message_count = 0
+        self._welcome_shown = False
 
         self.tab_bar = QWidget()
         self.tab_bar.setObjectName("tabBar")
@@ -425,12 +428,32 @@ class ConversationPanel(QFrame):
         self.stack = QStackedWidget()
         self.stack.setObjectName("contentStack")
 
-        chat_page = QWidget()
-        chat_page.setObjectName("chatSpacer")
-        chat_page_layout = QVBoxLayout(chat_page)
-        chat_page_layout.setContentsMargins(0, 0, 0, 0)
-        chat_page_layout.addStretch()
-        self.stack.addWidget(chat_page)
+        self.chat_scroll = QScrollArea()
+        self.chat_scroll.setObjectName("chatScroll")
+        self.chat_scroll.setWidgetResizable(True)
+        self.chat_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.chat_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.chat_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+
+        self.chat_container = QWidget()
+        self.chat_container.setObjectName("chatHistory")
+        self.chat_layout = QVBoxLayout(self.chat_container)
+        self.chat_layout.setContentsMargins(10, 10, 10, 8)
+        self.chat_layout.setSpacing(8)
+
+        self.thinking_host = QWidget()
+        self.thinking_host.setObjectName("thinkingHost")
+        thinking_row = QHBoxLayout(self.thinking_host)
+        thinking_row.setContentsMargins(0, 0, 0, 0)
+        thinking_row.setSpacing(0)
+        self.thinking_bubble = ThinkingBubble()
+        thinking_row.addWidget(self.thinking_bubble)
+        thinking_row.addStretch()
+        self.chat_layout.addStretch(1)
+        self.chat_layout.addWidget(self.thinking_host)
+
+        self.chat_scroll.setWidget(self.chat_container)
+        self.stack.addWidget(self.chat_scroll)
 
         self.thinking_message = QTextEdit()
         self.thinking_message.setObjectName("thinkingMessage")
@@ -438,22 +461,6 @@ class ConversationPanel(QFrame):
         self.thinking_message.setFont(QFont("monospace", 9))
         self.stack.addWidget(self.thinking_message)
         layout.addWidget(self.stack, stretch=1)
-
-        user_row = QHBoxLayout()
-        user_row.setContentsMargins(10, 0, 10, 0)
-        user_row.addStretch()
-        self.user_bubble = SpeechBubble("user")
-        user_row.addWidget(self.user_bubble)
-        layout.addLayout(user_row)
-
-        assistant_row = QHBoxLayout()
-        assistant_row.setContentsMargins(10, 0, 10, 0)
-        self.thinking_bubble = ThinkingBubble()
-        self.assistant_bubble = SpeechBubble("assistant")
-        assistant_row.addWidget(self.thinking_bubble)
-        assistant_row.addWidget(self.assistant_bubble)
-        assistant_row.addStretch()
-        layout.addLayout(assistant_row)
 
         self.bottom_layout = QVBoxLayout()
         self.bottom_layout.setContentsMargins(10, 0, 10, 10)
@@ -469,20 +476,29 @@ class ConversationPanel(QFrame):
         self.dir_tab.set_active(index == self.TAB_CHAT)
         self.thinking_tab.set_active(index == self.TAB_THINKING)
 
-    def set_user_text(self, text: str) -> None:
-        self.user_bubble.set_text(text)
+    def has_messages(self) -> bool:
+        return self._message_count > 0
 
-    def set_assistant_text(self, text: str, *, error: bool = False) -> None:
-        self.hide_thinking_indicator()
-        self.assistant_bubble.set_text(text, error=error)
+    def append_user(self, text: str) -> None:
+        bubble = SpeechBubble("user")
+        bubble.set_text(text)
+        self._add_message_row(bubble, align_right=True)
 
-    def clear_assistant(self) -> None:
+    def append_assistant(self, text: str, *, error: bool = False) -> None:
         self.hide_thinking_indicator()
-        self.assistant_bubble.set_text("")
+        bubble = SpeechBubble("assistant")
+        bubble.set_text(text, error=error)
+        self._add_message_row(bubble, align_right=False)
+
+    def show_welcome_once(self, text: str) -> None:
+        if self._welcome_shown or self.has_messages():
+            return
+        self._welcome_shown = True
+        self.append_assistant(text)
 
     def show_thinking_indicator(self) -> None:
-        self.assistant_bubble.hide()
         self.thinking_bubble.start()
+        self._scroll_to_bottom()
 
     def hide_thinking_indicator(self) -> None:
         self.thinking_bubble.stop()
@@ -501,6 +517,37 @@ class ConversationPanel(QFrame):
         self.thinking_tab.hide()
         if self.stack.currentIndex() == self.TAB_THINKING:
             self.set_active_tab(self.TAB_CHAT)
+
+    def _add_message_row(self, bubble: SpeechBubble, *, align_right: bool) -> None:
+        row = QWidget()
+        row.setObjectName("messageRow")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_layout.setSpacing(0)
+        bubble.setMaximumWidth(self._bubble_max_width())
+        if align_right:
+            row_layout.addStretch()
+            row_layout.addWidget(bubble)
+        else:
+            row_layout.addWidget(bubble)
+            row_layout.addStretch()
+
+        insert_at = self.chat_layout.indexOf(self.thinking_host)
+        self.chat_layout.insertWidget(insert_at, row)
+        self._message_count += 1
+        self.set_active_tab(self.TAB_CHAT)
+        self._scroll_to_bottom()
+
+    def _bubble_max_width(self) -> int:
+        width = self.chat_scroll.viewport().width() if self.chat_scroll.viewport() else self.width()
+        return max(220, min(420, width - 40))
+
+    def _scroll_to_bottom(self) -> None:
+        QTimer.singleShot(0, self._scroll_to_bottom_now)
+
+    def _scroll_to_bottom_now(self) -> None:
+        bar = self.chat_scroll.verticalScrollBar()
+        bar.setValue(bar.maximum())
 
 
 class CommandPreviewWidget(QWidget):
@@ -859,7 +906,7 @@ class ChatWindow(QMainWindow):
         else:
             self.input_box.setPlaceholderText("Set up a backend first (gear icon, top right)")
             self.status_label.setText("No backend configured yet")
-            self.message_panel.set_assistant_text(
+            self.message_panel.show_welcome_once(
                 "Welcome to InDir! No backend is configured yet.\n\n"
                 "Click the gear icon in the top right, pick a provider, "
                 "paste your API key, and press Save."
@@ -1003,7 +1050,11 @@ class ChatWindow(QMainWindow):
                 border: 1px solid #212938;
                 border-radius: 14px;
             }
-            QStackedWidget#contentStack, QWidget#chatSpacer {
+            QStackedWidget#contentStack,
+            QScrollArea#chatScroll,
+            QWidget#chatHistory,
+            QWidget#thinkingHost,
+            QWidget#messageRow {
                 background: transparent; border: none;
             }
             QTextEdit#thinkingMessage {
@@ -1201,28 +1252,6 @@ class ChatWindow(QMainWindow):
         layout.addWidget(self.status_label)
         self.input_box.setFocus()
 
-    def _refresh_backend_state(self) -> None:
-        """Enable/disable the composer based on whether a backend is usable."""
-        ready = self.session is not None
-        self.input_box.setEnabled(ready)
-        self.send_btn.setEnabled(ready)
-        if ready:
-            self.input_box.setPlaceholderText("Ask about this folder…")
-            provider = PROVIDER_LABELS.get(
-                self.config.backend.provider, self.config.backend.provider
-            )
-            self.status_label.setText(
-                f"{provider} · Enter to send · Shift+Enter for newline"
-            )
-        else:
-            self.input_box.setPlaceholderText("Set up a backend first (gear icon, top right)")
-            self.status_label.setText("No backend configured yet")
-            self.message_panel.set_assistant_text(
-                "Welcome to InDir! No backend is configured yet.\n\n"
-                "Click the gear icon in the top right, pick a provider, "
-                "paste your API key, and press Save."
-            )
-
     def _append_background(self, heading: str, body: str) -> None:
         self.message_panel.append_thinking(f"{heading}\n{body.strip()}")
 
@@ -1313,13 +1342,12 @@ class ChatWindow(QMainWindow):
             return
         self.input_box.clear()
         self.input_box.setFixedHeight(MessageInput.MIN_HEIGHT)
-        self.message_panel.set_user_text(text)
-        self.message_panel.clear_assistant()
+        self.message_panel.append_user(text)
         self.message_panel.clear_thinking()
         self._start_worker("message", "Thinking…", text=text)
 
     def _on_worker_error(self, msg: str) -> None:
-        self.message_panel.set_assistant_text(msg, error=True)
+        self.message_panel.append_assistant(msg, error=True)
 
     def _on_worker_events(self, events: list) -> None:
         for event in events:
@@ -1333,7 +1361,7 @@ class ChatWindow(QMainWindow):
 
     def _handle_event(self, event: AgentEvent) -> None:
         if event.type == EventType.ASSISTANT_TEXT:
-            self.message_panel.set_assistant_text(event.content)
+            self.message_panel.append_assistant(event.content)
         elif event.type == EventType.THINKING:
             self._append_background("Reasoning", event.content)
         elif event.type == EventType.TOOL_RESULT:
@@ -1342,9 +1370,9 @@ class ChatWindow(QMainWindow):
             self._append_background("Command output", event.content)
         elif event.type == EventType.COMMAND_PENDING:
             self._show_command_preview(event.tool_call_id or "", event.command or "")
-            self.message_panel.set_assistant_text(event.content)
+            self.message_panel.append_assistant(event.content)
         elif event.type == EventType.ERROR:
-            self.message_panel.set_assistant_text(event.content, error=True)
+            self.message_panel.append_assistant(event.content, error=True)
 
     def _on_approve_command(self) -> None:
         if not self._pending_tool_call_id or self._worker_running():
