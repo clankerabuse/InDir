@@ -16,15 +16,28 @@ class AnthropicBackend(ChatBackend):
                 f"Missing API key: set {config.api_key_env} or api_key in config"
             )
         self.config = config
-        self.client = httpx.Client(
+        self.client = self._make_client()
+
+    def _make_client(self) -> httpx.Client:
+        return httpx.Client(
             base_url="https://api.anthropic.com",
             headers={
-                "x-api-key": config.resolved_api_key(),
+                "x-api-key": self.config.resolved_api_key(),
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             },
             timeout=120.0,
         )
+
+    def _ensure_client(self) -> None:
+        if self.client.is_closed:
+            self.client = self._make_client()
+
+    def abort(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            pass
 
     def _to_anthropic_messages(
         self, messages: list[ChatMessage]
@@ -82,6 +95,7 @@ class AnthropicBackend(ChatBackend):
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
+        self._ensure_client()
         system, anthropic_messages = self._to_anthropic_messages(messages)
         payload: dict[str, Any] = {
             "model": self.config.model,

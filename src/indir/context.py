@@ -99,7 +99,7 @@ def build_suggested_commands(directory: Path) -> str:
         name = by_ext[".mp4"][0]
         out = str(Path(name).with_suffix(".webm"))
         lines.append(
-            'Convert mp4 → webm (copy this command exactly; do not change the filenames):'
+            "Convert mp4 → webm (copy this command exactly; do not change the filenames):"
         )
         lines.append(
             f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libvpx-vp9 -crf 32 -b:v 0 '
@@ -109,7 +109,7 @@ def build_suggested_commands(directory: Path) -> str:
         name = by_ext[".webm"][0]
         out = str(Path(name).with_suffix(".mp4"))
         lines.append(
-            'Convert webm → mp4 (copy this command exactly; do not change the filenames):'
+            "Convert webm → mp4 (copy this command exactly; do not change the filenames):"
         )
         lines.append(
             f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libx264 -crf 23 -c:a aac "{out}"'
@@ -171,7 +171,8 @@ def resolve_run_command(directory: Path, command: str) -> str:
 
 
 def build_system_prompt(directory: Path) -> str:
-    listing = build_directory_listing(directory)
+    # Keep the system prompt lean: summary + recipes only. Full listings come from
+    # list_directory when the model actually needs them — less prefill every turn.
     summary = build_directory_summary(directory)
     suggested = build_suggested_commands(directory)
     suggested_block = f"\n{suggested}\n" if suggested else ""
@@ -181,47 +182,28 @@ Working directory: {directory}
 
 File summary:
 {summary}
-
-Current directory contents:
-{listing}
 {suggested_block}
-## Conditioning (follow every turn)
-- I use this directory as the primary reference for the chat. I inspect its files to answer questions and complete tasks.
-- I use CLI tools on the system via run_command. If a tool is missing, I tell the user how to install it (Arch Linux: pacman -S <package>) and stop.
-- I stay scoped to this directory unless the user explicitly asks otherwise.
+## Scope
+- This directory is the primary reference for the chat.
+- Use run_command for CLI tools. If a tool is missing, tell the user how to install it (Arch: pacman -S <package>) and stop.
+- Stay scoped here unless the user asks otherwise.
 
-## Required behavior
-1. Always write 1-3 sentences of explanation in your message text before calling any tool. Never respond with an empty message and only a tool call.
-2. Resolve "this file", "this mp4", "it", etc. using the file summary and listing above:
-   - If the summary shows exactly one matching file (e.g. "1 .mp4 file: foo.mp4"), use that file immediately. Do not ask the user to confirm or choose.
-   - If several files match, list the names and ask which one.
-   - If none match, use list_directory with a glob (e.g. "*.mp4") before acting.
-3. For action requests ("convert", "rename", "compress", etc.): after your explanation, you MUST call run_command in the same turn. Never ask "should I proceed?", "do you want to convert?", "say yes to confirm", or similar — the UI has an approve/deny button for commands.
-4. Do not call list_directory if the file summary already identifies the target file.
-5. Quote every filename in shell commands with double quotes. Use the exact filename from the listing. If a suggested command is provided above, copy it verbatim into run_command.
-6. Output filenames keep the same basename as the input; only change the extension (foo.mp4 → foo.webm).
-7. Prefer one run_command that checks the tool then runs the action:
-   command -v ffmpeg && ffmpeg -y -i "input.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "input.webm"
-8. Keep responses concise and actionable. When proposing a command, say what it does and which file(s) it affects.
+## Behavior
+1. For action requests, briefly say what you'll do, then call run_command in the same turn. Never ask "should I proceed?" — the UI has approve/deny.
+2. Resolve "this file" / "this mp4" from the file summary:
+   - Exactly one match → use it immediately.
+   - Several matches → list names and ask which.
+   - None / need filenames → call list_directory (e.g. pattern "*.mp4"). Do not call it when the summary already identifies the file.
+3. Quote filenames with double quotes. If a suggested command is provided above, copy it verbatim into run_command.
+4. Keep output basenames the same; only change the extension (foo.mp4 → foo.webm).
+5. Prefer one command: command -v TOOL && TOOL ...
+6. Keep replies short.
 
-## Action request workflow (convert / rename / batch)
-Example user message: "convert this mp4 to webm"
-Correct response pattern:
-  Text: "Converting foo.mp4 to foo.webm with ffmpeg."
-  Tool: run_command with the webm recipe using foo.mp4
-Wrong: asking the user to confirm in chat, or listing the directory when the file summary already shows one .mp4 file.
-
-## Task recipes
-Video convert to webm:
-  command -v ffmpeg && ffmpeg -y -i "SOURCE.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "SOURCE.webm"
-(change extension on output; keep the same basename)
-
-Video convert to mp4:
-  command -v ffmpeg && ffmpeg -y -i "SOURCE.webm" -c:v libx264 -crf 23 -c:a aac "SOURCE.mp4"
-
-Batch rename (example .jpeg → .jpg):
-  for f in *.jpeg; do mv -- "$f" "${{f%.jpeg}}.jpg"; done
+## Recipes
+webm: command -v ffmpeg && ffmpeg -y -i "SOURCE.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "SOURCE.webm"
+mp4: command -v ffmpeg && ffmpeg -y -i "SOURCE.webm" -c:v libx264 -crf 23 -c:a aac "SOURCE.mp4"
+rename jpeg→jpg: for f in *.jpeg; do mv -- "$f" "${{f%.jpeg}}.jpg"; done
 
 ## Safety
-- All shell commands run with cwd set to the working directory above.
-- Prefer safe, non-destructive commands. Ask before deleting or overwriting files unless the user explicitly requests it."""
+- Commands run with cwd set to the working directory.
+- Prefer non-destructive commands. Ask before deleting/overwriting unless the user asked for it."""

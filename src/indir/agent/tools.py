@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import fnmatch
 import subprocess
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +69,10 @@ def run_command(
     directory: Path,
     command: str,
     config: ExecutionConfig,
+    *,
+    cancel_event: threading.Event | None = None,
+    on_start: Callable[[subprocess.Popen[str]], None] | None = None,
+    on_finish: Callable[[], None] | None = None,
 ) -> CommandResult:
     block_reason = is_command_blocked(command, config.blocklist)
     if block_reason:
@@ -79,37 +85,70 @@ def run_command(
             block_reason=block_reason,
         )
 
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            cwd=directory,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
-    except subprocess.TimeoutExpired:
+    if cancel_event is not None and cancel_event.is_set():
         return CommandResult(
             command=command,
             stdout="",
-            stderr="Command timed out after 300 seconds",
+            stderr="Cancelled before start",
+            returncode=-1,
+        )
+
+    try:
+        proc = subprocess.Popen(
+            command,
+            shell=True,
+            cwd=directory,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as exc:
+        return CommandResult(
+            command=command,
+            stdout="",
+            stderr=str(exc),
+            returncode=-1,
+        )
+
+    if on_start is not None:
+        on_start(proc)
+
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=300)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            return CommandResult(
+                command=command,
+                stdout="",
+                stderr="Command timed out after 300 seconds",
+                returncode=-1,
+            )
+    finally:
+        if on_finish is not None:
+            on_finish()
+
+    if cancel_event is not None and cancel_event.is_set():
+        return CommandResult(
+            command=command,
+            stdout=stdout or "",
+            stderr=(stderr or "").strip() or "Cancelled by user",
             returncode=-1,
         )
 
     max_bytes = config.max_output_bytes
-    stdout = proc.stdout
-    stderr = proc.stderr
     if len(stdout) > max_bytes:
         stdout = stdout[:max_bytes] + f"\n... (truncated, {max_bytes} bytes max)"
     if len(stderr) > max_bytes:
         stderr = stderr[:max_bytes] + f"\n... (truncated, {max_bytes} bytes max)"
 
-    log_command(directory, command, proc.returncode)
+    log_command(directory, command, proc.returncode or 0)
     return CommandResult(
         command=command,
         stdout=stdout,
         stderr=stderr,
-        returncode=proc.returncode,
+        returncode=proc.returncode or 0,
     )
 
 

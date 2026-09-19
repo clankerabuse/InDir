@@ -16,11 +16,24 @@ class OpenAICompatBackend(ChatBackend):
                 f"Missing API key: set {config.api_key_env} or api_key in config"
             )
         self.config = config
-        self.client = httpx.Client(
-            base_url=config.base_url,
-            headers={"Authorization": f"Bearer {config.resolved_api_key()}"},
+        self.client = self._make_client()
+
+    def _make_client(self) -> httpx.Client:
+        return httpx.Client(
+            base_url=self.config.base_url,
+            headers={"Authorization": f"Bearer {self.config.resolved_api_key()}"},
             timeout=120.0,
         )
+
+    def _ensure_client(self) -> None:
+        if self.client.is_closed:
+            self.client = self._make_client()
+
+    def abort(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            pass
 
     def _to_openai_messages(self, messages: list[ChatMessage]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -60,6 +73,7 @@ class OpenAICompatBackend(ChatBackend):
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
+        self._ensure_client()
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": self._to_openai_messages(messages),

@@ -12,7 +12,20 @@ from indir.config import OllamaConfig
 class OllamaBackend(ChatBackend):
     def __init__(self, config: OllamaConfig) -> None:
         self.config = config
-        self.client = httpx.Client(base_url=config.base_url, timeout=120.0)
+        self.client = self._make_client()
+
+    def _make_client(self) -> httpx.Client:
+        return httpx.Client(base_url=self.config.base_url, timeout=120.0)
+
+    def _ensure_client(self) -> None:
+        if self.client.is_closed:
+            self.client = self._make_client()
+
+    def abort(self) -> None:
+        try:
+            self.client.close()
+        except Exception:
+            pass
 
     def _to_ollama_messages(self, messages: list[ChatMessage]) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
@@ -57,6 +70,7 @@ class OllamaBackend(ChatBackend):
         messages: list[ChatMessage],
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
+        self._ensure_client()
         payload: dict[str, Any] = {
             "model": self.config.model,
             "messages": self._to_ollama_messages(messages),

@@ -49,8 +49,11 @@ def test_build_system_prompt_includes_conditioning(tmp_path: Path) -> None:
     assert "example.txt" in prompt
     assert "primary reference for the chat" in prompt
     assert "pacman -S" in prompt
-    assert "Task recipes" in prompt
-    assert "Never respond with an empty message" in prompt
+    assert "Recipes" in prompt
+    assert "list_directory" in prompt
+    # Full directory listing is deferred to the tool to keep prompts lean.
+    assert "Current directory contents:" not in prompt
+    assert "[file] example.txt" not in prompt
 
 
 def test_normalize_path(tmp_path: Path) -> None:

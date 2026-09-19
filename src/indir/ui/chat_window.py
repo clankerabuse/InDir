@@ -6,6 +6,7 @@ from pathlib import Path
 from PySide6.QtCore import (
     QEasingCurve,
     QEvent,
+    QPoint,
     QPropertyAnimation,
     QSize,
     Qt,
@@ -134,7 +135,17 @@ class SessionWorker(QThread):
                 raise ValueError(f"Unknown worker task: {self.task}")
             self.finished_events.emit(events)
         except Exception as exc:
-            self.error.emit(str(exc))
+            if self.session.is_cancelled():
+                self.finished_events.emit(
+                    [
+                        AgentEvent(
+                            type=EventType.ASSISTANT_TEXT,
+                            content="Stopped.",
+                        )
+                    ]
+                )
+            else:
+                self.error.emit(str(exc))
 
 
 class AgentWorker(SessionWorker):
@@ -142,6 +153,43 @@ class AgentWorker(SessionWorker):
 
     def __init__(self, session: AgentSession, message: str) -> None:
         super().__init__("message", session, text=message)
+
+
+class ToastBanner(QFrame):
+    """Small in-window popup (not a separate dialog) for brief notices."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setObjectName("toastBanner")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.hide()
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        self.label = QLabel()
+        self.label.setObjectName("toastLabel")
+        self.label.setWordWrap(True)
+        layout.addWidget(self.label)
+
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+
+    def show_message(self, text: str, *, anchor: QWidget | None = None) -> None:
+        self.label.setText(text)
+        self.adjustSize()
+        parent = self.parentWidget()
+        if parent is not None and anchor is not None:
+            # Sit just under the gear, right-aligned to it.
+            below = anchor.mapTo(parent, QPoint(anchor.width(), anchor.height() + 6))
+            x = max(8, min(below.x() - self.width(), parent.width() - self.width() - 8))
+            y = max(8, below.y())
+            self.move(x, y)
+        elif parent is not None:
+            self.move(parent.width() - self.width() - 12, 44)
+        self.show()
+        self.raise_()
+        self._timer.start(2200)
 
 
 class MessageInput(QTextEdit):
@@ -206,15 +254,17 @@ class MessageInput(QTextEdit):
 
 
 class ComposerField(QWidget):
-    """Pill-shaped message field with an embedded send button."""
+    """Pill-shaped message field with an embedded send/stop button."""
 
     submit = Signal()
+    stop = Signal()
     SEND_SIZE = 28
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setObjectName("composerField")
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._busy = False
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -230,7 +280,7 @@ class ComposerField(QWidget):
         self.input_box = MessageInput()
         self.input_box.setObjectName("composerInput")
         self.input_box.setPlaceholderText("Ask about this folder…")
-        self.input_box.submit.connect(self.submit.emit)
+        self.input_box.submit.connect(self._on_input_submit)
         palette = self.input_box.palette()
         palette.setColor(QPalette.ColorRole.Base, Qt.GlobalColor.transparent)
         palette.setColor(QPalette.ColorRole.PlaceholderText, QColor("#5c6780"))
@@ -245,12 +295,36 @@ class ComposerField(QWidget):
         self.send_btn.setToolTip("Send")
         self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_btn.setFixedSize(self.SEND_SIZE, self.SEND_SIZE)
-        self.send_btn.clicked.connect(self.submit.emit)
+        self.send_btn.clicked.connect(self._on_button_clicked)
 
         capsule_layout.addWidget(self.input_box, stretch=1, alignment=Qt.AlignmentFlag.AlignVCenter)
         capsule_layout.addWidget(self.send_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         outer.addWidget(self.capsule)
         self.input_box.installEventFilter(self)
+
+    def _on_input_submit(self) -> None:
+        if not self._busy:
+            self.submit.emit()
+
+    def _on_button_clicked(self) -> None:
+        if self._busy:
+            self.stop.emit()
+        else:
+            self.submit.emit()
+
+    def set_busy(self, busy: bool) -> None:
+        self._busy = busy
+        if busy:
+            self.send_btn.setObjectName("stopButton")
+            self.send_btn.setIcon(QIcon(_asset("stop.svg")))
+            self.send_btn.setToolTip("Stop")
+            self.send_btn.setEnabled(True)
+        else:
+            self.send_btn.setObjectName("sendButton")
+            self.send_btn.setIcon(QIcon(_asset("arrow_up.svg")))
+            self.send_btn.setToolTip("Send")
+        self.send_btn.style().unpolish(self.send_btn)
+        self.send_btn.style().polish(self.send_btn)
 
     def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt override)
         if obj is self.input_box:
@@ -881,6 +955,10 @@ class ChatWindow(QMainWindow):
         self.worker: SessionWorker | None = None
         self._pending_tool_call_id: str | None = None
         self._command_preview: CommandPreviewWidget | None = None
+        self._stopping = False
+        self._stop_status_timer = QTimer(self)
+        self._stop_status_timer.setSingleShot(True)
+        self._stop_status_timer.timeout.connect(self._on_stop_status_tick)
 
         self.setWindowTitle(f"InDir — {directory.name}")
         self.resize(430, 460)
@@ -1120,6 +1198,30 @@ class ChatWindow(QMainWindow):
                     stop:0 #6f8cff, stop:1 #a273f7);
             }
             QToolButton#sendButton:disabled { background: #232c3f; }
+            QToolButton#stopButton {
+                background: #3a2430;
+                border: 1px solid #6a3348;
+                border-radius: 14px;
+                min-width: 28px; max-width: 28px;
+                min-height: 28px; max-height: 28px;
+                padding: 0;
+            }
+            QToolButton#stopButton:hover {
+                background: #4a2c3c;
+                border-color: #8a4560;
+            }
+
+            QFrame#toastBanner {
+                background: #1b2230;
+                border: 1px solid #2b3548;
+                border-radius: 10px;
+                max-width: 280px;
+            }
+            QLabel#toastLabel {
+                color: #cdd6e6;
+                font-size: 12px;
+                background: transparent;
+            }
 
             QWidget#commandCard {
                 background: #131926;
@@ -1200,10 +1302,13 @@ class ChatWindow(QMainWindow):
         settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         settings_btn.setToolTip("Backend & model settings")
         settings_btn.clicked.connect(self._open_settings)
+        self.settings_btn = settings_btn
         header_layout.addWidget(settings_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
         layout.addLayout(header_layout)
 
         layout.addWidget(self.message_panel, stretch=1)
+
+        self.toast = ToastBanner(central)
 
         self.approval_host = QWidget()
         self.approval_layout = QVBoxLayout(self.approval_host)
@@ -1214,6 +1319,7 @@ class ChatWindow(QMainWindow):
 
         self.composer = ComposerField()
         self.composer.submit.connect(self._on_send)
+        self.composer.stop.connect(self._on_stop)
         self.input_box = self.composer.input_box
         self.send_btn = self.composer.send_btn
 
@@ -1287,7 +1393,10 @@ class ChatWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         if self._worker_running():
-            QMessageBox.information(self, "InDir", "Wait for the current task to finish first.")
+            self.toast.show_message(
+                "Wait for the current task to finish first.",
+                anchor=self.settings_btn,
+            )
             return
         dialog = SettingsDialog(self.config, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -1305,8 +1414,11 @@ class ChatWindow(QMainWindow):
             self.status_label.setText(f"Switched to {provider}.")
 
     def _set_busy(self, busy: bool, message: str = "") -> None:
-        self.send_btn.setEnabled(not busy)
-        self.input_box.setEnabled(not busy)
+        self.composer.set_busy(busy)
+        if not busy:
+            # Restore send enabled state based on backend readiness.
+            self.send_btn.setEnabled(self.session is not None)
+        self.input_box.setEnabled(not busy and self.session is not None)
         self.approve_btn.setEnabled(not busy)
         self.deny_btn.setEnabled(not busy)
         self.type_btn.setEnabled(not busy)
@@ -1324,6 +1436,9 @@ class ChatWindow(QMainWindow):
     def _start_worker(self, task: str, busy_message: str, **kwargs) -> None:
         if self._worker_running() or self.session is None:
             return
+        self._stopping = False
+        self._stop_status_timer.stop()
+        self.session.clear_cancel()
         self._set_busy(True, busy_message)
         self.worker = SessionWorker(task, self.session, **kwargs)
         self.worker.finished_events.connect(self._on_worker_events)
@@ -1331,8 +1446,30 @@ class ChatWindow(QMainWindow):
         self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
 
+    def _on_stop(self) -> None:
+        if not self._worker_running() or self.session is None:
+            return
+        if self._stopping:
+            # Already cancelling — refresh the explanation.
+            self.status_label.setText(self.session.cancel_wait_hint())
+            return
+        self._stopping = True
+        message = self.session.request_cancel()
+        self.status_label.setText(message)
+        self.send_btn.setToolTip("Stopping…")
+        self._stop_status_timer.start(1800)
+
+    def _on_stop_status_tick(self) -> None:
+        if not self._stopping or not self._worker_running() or self.session is None:
+            return
+        self.status_label.setText(self.session.cancel_wait_hint())
+
     def _on_worker_finished(self) -> None:
+        self._stopping = False
+        self._stop_status_timer.stop()
         self._set_busy(False, "")
+        if self.session is not None:
+            self.session.clear_cancel()
 
     def _on_send(self) -> None:
         text = self.input_box.toPlainText().strip()

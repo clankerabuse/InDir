@@ -72,3 +72,7 @@ class ChatBackend:
         tools: list[dict[str, Any]] | None = None,
     ) -> ChatResponse:
         raise NotImplementedError
+
+    def abort(self) -> None:
+        """Best-effort cancel of an in-flight request. Optional for backends."""
+        return
