@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="InDir">
+  <defs>
+    <linearGradient id="tile" x1="8" y1="2" x2="56" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1b2740"/>
+      <stop offset="1" stop-color="#10151f"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="12" y1="18" x2="52" y2="54" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#9eb6ff"/>
+      <stop offset="0.42" stop-color="#6d7dff"/>
+      <stop offset="1" stop-color="#9a62f0"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#tile)"/>
+  <rect x="1.25" y="1.25" width="61.5" height="61.5" rx="14.75" fill="none" stroke="#33415f" stroke-width="1.5"/>
+  <path fill="url(#fold)" d="M14 27.2c0-2.3 1.9-4.2 4.2-4.2h9.2l3.4 4h15c2.3 0 4.2 1.9 4.2 4.2V46c0 2.3-1.9 4.2-4.2 4.2H18.2C15.9 50.2 14 48.3 14 46V27.2z"/>
+  <path fill="#f7f8ff" d="M30.2 14.2h3.6c.7 0 1.2.5 1.2 1.2v8.1h4.3c1 0 1.5 1.2.8 1.9L32.8 33c-.4.5-1.2.5-1.6 0l-7.3-7.6c-.7-.7-.2-1.9.8-1.9h4.3v-8.1c0-.7.5-1.2 1.2-1.2z"/>
+</svg>

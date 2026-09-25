@@ -65,6 +65,23 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+WIDEN_SCOPE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "widen_scope",
+        "description": (
+            "Widen the chat from the single focused file to the whole working directory. "
+            "Call this only when the user asks to include the folder, other files, or a wider scope."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+            "required": [],
+        },
+    },
+}
+
+
 class ChatBackend:
     def chat(
         self,

@@ -11,6 +11,7 @@ from indir.context import (
     build_suggested_commands,
     build_system_prompt,
     normalize_path,
+    resolve_launch_target,
     resolve_run_command,
 )
 
@@ -60,6 +61,49 @@ def test_normalize_path(tmp_path: Path) -> None:
     assert normalize_path(str(tmp_path)) == tmp_path.resolve()
     uri = f"file://{tmp_path}"
     assert normalize_path(uri) == tmp_path.resolve()
+
+
+def test_resolve_launch_target_file_and_directory(tmp_path: Path) -> None:
+    folder = tmp_path / "clips"
+    folder.mkdir()
+    video = folder / "clip.webm"
+    video.write_text("x")
+    (folder / "notes.txt").write_text("other")
+
+    directory = resolve_launch_target(str(folder))
+    assert directory.directory == folder.resolve()
+    assert directory.focus_file is None
+
+    focused = resolve_launch_target(f"file://{video}")
+    assert focused.directory == folder.resolve()
+    assert focused.focus_file == video.resolve()
+
+    with pytest.raises(FileNotFoundError):
+        resolve_launch_target(str(tmp_path / "missing"))
+
+
+def test_focused_file_prompt_hides_siblings(tmp_path: Path) -> None:
+    video = tmp_path / "clip.webm"
+    video.write_text("x")
+    (tmp_path / "other.mp4").write_text("x")
+
+    prompt = build_system_prompt(tmp_path, video)
+    assert "clip.webm" in prompt
+    assert "other.mp4" not in prompt
+    assert "widen_scope" in prompt
+    assert "single file" in prompt
+    assert 'ffmpeg -y -i "clip.webm"' in prompt
+
+
+def test_resolve_run_command_uses_focused_file_among_siblings(tmp_path: Path) -> None:
+    focus = tmp_path / "keep me.webm"
+    focus.write_text("x")
+    (tmp_path / "other.webm").write_text("x")
+    bad = 'ffmpeg -y -i "wrong.webm" out.mp4'
+    fixed = resolve_run_command(tmp_path, bad, focus)
+    assert "keep me.webm" in fixed
+    assert "keep me.mp4" in fixed
+    assert "other.webm" not in fixed
 
 
 def test_load_config_defaults() -> None:

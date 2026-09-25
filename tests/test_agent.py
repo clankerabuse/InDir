@@ -181,3 +181,34 @@ def test_agent_approve_skips_followup_on_success(httpx_mock, tmp_path: Path) -> 
     assert any(e.type == EventType.COMMAND_RESULT for e in approve_events)
     assert any(e.content == "Done." for e in approve_events)
     assert len(httpx_mock.get_requests()) == 1
+
+
+def test_file_focus_blocks_listing_until_widened(tmp_path: Path) -> None:
+    focus = tmp_path / "only.txt"
+    focus.write_text("hi")
+    (tmp_path / "other.txt").write_text("x")
+
+    config = AppConfig()
+    backend = OllamaBackend(OllamaConfig())
+    session = AgentSession(tmp_path, config, backend, focus_file=focus)
+
+    assert "only.txt" in session.messages[0].content
+    assert "other.txt" not in session.messages[0].content
+    assert any(tool["function"]["name"] == "widen_scope" for tool in session._tool_definitions())
+
+    blocked = session._execute_tool("list_directory", {}, "list-1")
+    assert blocked is not None
+    assert "widen_scope" in blocked.content
+    assert "other.txt" not in blocked.content
+
+    widened = session._widen_scope("wide-1")
+    assert widened.type == EventType.SCOPE_WIDENED
+    assert session.scope_widened
+    assert "primary reference for the chat" in session.messages[0].content
+    assert "single file" not in session.messages[0].content
+    assert all(tool["function"]["name"] != "widen_scope" for tool in session._tool_definitions())
+
+    listed = session._execute_tool("list_directory", {}, "list-2")
+    assert listed is not None
+    assert "other.txt" in listed.content
+    assert "only.txt" in listed.content

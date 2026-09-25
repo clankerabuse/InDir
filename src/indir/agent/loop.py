@@ -13,9 +13,9 @@ from indir.agent.tools import (
     list_directory,
     run_command,
 )
-from indir.backends.base import TOOL_DEFINITIONS, ChatBackend, ChatMessage
+from indir.backends.base import TOOL_DEFINITIONS, WIDEN_SCOPE_TOOL, ChatBackend, ChatMessage
 from indir.config import AppConfig
-from indir.context import build_system_prompt, resolve_run_command
+from indir.context import build_directory_summary, build_system_prompt, resolve_run_command
 
 # Keep recent turns only so long chats don't keep growing prefill cost.
 _MAX_HISTORY_MESSAGES = 24
@@ -28,6 +28,7 @@ class EventType(str, Enum):
     COMMAND_PENDING = "command_pending"
     COMMAND_RESULT = "command_result"
     ERROR = "error"
+    SCOPE_WIDENED = "scope_widened"
 
 
 @dataclass
@@ -49,8 +50,10 @@ class AgentSession:
     directory: Path
     config: AppConfig
     backend: ChatBackend
+    focus_file: Path | None = None
     messages: list[ChatMessage] = field(default_factory=list)
     pending_commands: list[PendingCommand] = field(default_factory=list)
+    scope_widened: bool = False
     _confirm_callback: Callable[[str], bool] | None = field(default=None, repr=False)
     _cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _active_proc: subprocess.Popen[str] | None = field(default=None, repr=False)
@@ -58,7 +61,10 @@ class AgentSession:
     def __post_init__(self) -> None:
         if not self.messages:
             self.messages.append(
-                ChatMessage(role="system", content=build_system_prompt(self.directory))
+                ChatMessage(
+                    role="system",
+                    content=build_system_prompt(self.directory, self.focus_file),
+                )
             )
 
     def set_confirm_callback(self, callback: Callable[[str], bool]) -> None:
@@ -129,8 +135,15 @@ class AgentSession:
 
     def _execute_tool(self, name: str, arguments: dict, tool_call_id: str) -> AgentEvent | None:
         if name == "list_directory":
-            pattern = arguments.get("pattern")
-            result = list_directory(self.directory, pattern)
+            if self.focus_file is not None and not self.scope_widened:
+                result = (
+                    f"This chat is focused on {self.focus_file.name} only. "
+                    "Other files are out of scope. If the user asked to include "
+                    "the folder or other files, call widen_scope."
+                )
+            else:
+                pattern = arguments.get("pattern")
+                result = list_directory(self.directory, pattern)
             self.messages.append(
                 ChatMessage(
                     role="tool",
@@ -142,7 +155,10 @@ class AgentSession:
             return AgentEvent(type=EventType.TOOL_RESULT, content=result)
 
         if name == "run_command":
-            command = resolve_run_command(self.directory, arguments.get("command", ""))
+            focus = None if self.scope_widened else self.focus_file
+            command = resolve_run_command(
+                self.directory, arguments.get("command", ""), focus
+            )
             if self.config.execution.mode == "auto":
                 cmd_result = self._run_shell(command)
                 formatted = format_command_result(cmd_result)
@@ -171,11 +187,55 @@ class AgentSession:
                 tool_call_id=tool_call_id,
             )
 
+        if name == "widen_scope":
+            return self._widen_scope(tool_call_id)
+
         error = f"Unknown tool: {name}"
         self.messages.append(
             ChatMessage(role="tool", content=error, tool_call_id=tool_call_id, name=name)
         )
         return AgentEvent(type=EventType.ERROR, content=error)
+
+    def _tool_definitions(self) -> list[dict]:
+        if self.focus_file is not None and not self.scope_widened:
+            return [*TOOL_DEFINITIONS, WIDEN_SCOPE_TOOL]
+        return TOOL_DEFINITIONS
+
+    def _widen_scope(self, tool_call_id: str) -> AgentEvent:
+        if self.focus_file is None or self.scope_widened:
+            detail = f"Scope is already the directory {self.directory}."
+            self.messages.append(
+                ChatMessage(
+                    role="tool",
+                    content=detail,
+                    tool_call_id=tool_call_id,
+                    name="widen_scope",
+                )
+            )
+            return AgentEvent(type=EventType.TOOL_RESULT, content=detail)
+
+        self.scope_widened = True
+        prompt = build_system_prompt(self.directory)
+        for message in self.messages:
+            if message.role == "system":
+                message.content = prompt
+                break
+        summary = build_directory_summary(self.directory)
+        detail = (
+            f"Scope widened to {self.directory}.\n"
+            f"{summary}\n"
+            "You may now list and act on other files in this directory."
+        )
+        self.messages.append(
+            ChatMessage(
+                role="tool",
+                content=detail,
+                tool_call_id=tool_call_id,
+                name="widen_scope",
+            )
+        )
+        label = self.directory.name or str(self.directory)
+        return AgentEvent(type=EventType.SCOPE_WIDENED, content=label)
 
     def approve_command(self, tool_call_id: str, command: str | None = None) -> list[AgentEvent]:
         pending = next(
@@ -249,6 +309,8 @@ class AgentSession:
                     parts.append(f"I'll list files matching: {pattern}")
                 else:
                     parts.append("I'll list the directory contents.")
+            elif tc.name == "widen_scope":
+                parts.append("I'll include the whole folder.")
         return "\n".join(parts)
 
     def send_user_message(self, text: str) -> list[AgentEvent]:
@@ -264,7 +326,7 @@ class AgentSession:
                 return events
 
             try:
-                response = self.backend.chat(self._messages_for_api(), tools=TOOL_DEFINITIONS)
+                response = self.backend.chat(self._messages_for_api(), tools=self._tool_definitions())
             except Exception as exc:
                 if self.is_cancelled():
                     events.append(self._cancelled_event())

@@ -938,16 +938,25 @@ class SettingsDialog(QDialog):
 
 
 class ChatWindow(QMainWindow):
-    def __init__(self, directory: Path, config: AppConfig) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        config: AppConfig,
+        focus_file: Path | None = None,
+    ) -> None:
         super().__init__()
         self.directory = directory
+        self.focus_file = focus_file
+        self._file_focus = focus_file is not None
         self.config = config
         self.backend = None
         self.session: AgentSession | None = None
         self._backend_error: str | None = None
         try:
             self.backend = create_backend(config, directory)
-            self.session = AgentSession(directory, config, self.backend)
+            self.session = AgentSession(
+                directory, config, self.backend, focus_file=focus_file
+            )
         except Exception as exc:
             # Never block the UI on a missing key — the user configures the
             # backend from the settings dialog after the window is up.
@@ -960,13 +969,14 @@ class ChatWindow(QMainWindow):
         self._stop_status_timer.setSingleShot(True)
         self._stop_status_timer.timeout.connect(self._on_stop_status_tick)
 
-        self.setWindowTitle(f"InDir — {directory.name}")
+        self.setWindowTitle(f"InDir — {self._scope_label()}")
+        self.setWindowIcon(QIcon(_asset("indir.svg")))
         self.resize(430, 460)
         self.setMinimumSize(360, 320)
         self._apply_dark_theme()
         self._build_ui()
-        if not self._try_create_backend():
-            self._refresh_backend_state()
+        self._try_create_backend()
+        self._refresh_backend_state()
 
     def _refresh_backend_state(self) -> None:
         """Enable/disable the composer based on whether a backend is usable."""
@@ -974,13 +984,11 @@ class ChatWindow(QMainWindow):
         self.input_box.setEnabled(ready)
         self.send_btn.setEnabled(ready)
         if ready:
-            self.input_box.setPlaceholderText("Ask about this folder…")
-            provider = PROVIDER_LABELS.get(
-                self.config.backend.provider, self.config.backend.provider
-            )
-            self.status_label.setText(
-                f"{provider} · Enter to send · Shift+Enter for newline"
-            )
+            if self._file_focus:
+                self.input_box.setPlaceholderText("Ask about this file…")
+            else:
+                self.input_box.setPlaceholderText("Ask about this folder…")
+            self.status_label.setText(self._idle_status())
         else:
             self.input_box.setPlaceholderText("Set up a backend first (gear icon, top right)")
             self.status_label.setText("No backend configured yet")
@@ -993,7 +1001,10 @@ class ChatWindow(QMainWindow):
     def _try_create_backend(self) -> bool:
         try:
             self.backend = create_backend(self.config, self.directory)
-            self.session = AgentSession(self.directory, self.config, self.backend)
+            focus = self.focus_file if self._file_focus else None
+            self.session = AgentSession(
+                self.directory, self.config, self.backend, focus_file=focus
+            )
             self._backend_error = None
             return True
         except Exception as exc:
@@ -1271,6 +1282,38 @@ class ChatWindow(QMainWindow):
         """
         self.setStyleSheet(style.replace("@CHEVRON@", _asset("chevron_down.svg")))
 
+    def _scope_label(self) -> str:
+        if self._file_focus and self.focus_file is not None:
+            return self.focus_file.name
+        return self.directory.name or str(self.directory)
+
+    def _scope_tooltip(self) -> str:
+        if self._file_focus and self.focus_file is not None:
+            return str(self.focus_file)
+        return str(self.directory)
+
+    def _idle_status(self) -> str:
+        if self.session is None:
+            return "No backend configured yet"
+        provider = PROVIDER_LABELS.get(
+            self.config.backend.provider, self.config.backend.provider
+        )
+        if self._file_focus:
+            return f"{provider} · this file only · ask to include the folder"
+        return f"{provider} · Enter to send · Shift+Enter for newline"
+
+    def _apply_scope_chrome(self) -> None:
+        label = self._scope_label()
+        self.setWindowTitle(f"InDir — {label}")
+        self.message_panel.dir_tab.setText(label)
+        self.message_panel.dir_tab.setToolTip(self._scope_tooltip())
+
+    def widen_scope_chrome(self) -> None:
+        self._file_focus = False
+        self._apply_scope_chrome()
+        if not self._worker_running():
+            self._refresh_backend_state()
+
     def _build_ui(self) -> None:
         central = QWidget()
         self.setCentralWidget(central)
@@ -1278,12 +1321,16 @@ class ChatWindow(QMainWindow):
         layout.setContentsMargins(12, 10, 12, 10)
         layout.setSpacing(8)
 
-        dir_name = self.directory.name or str(self.directory)
-        self.message_panel = ConversationPanel(dir_name, str(self.directory))
+        dir_name = self._scope_label()
+        self.message_panel = ConversationPanel(dir_name, self._scope_tooltip())
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
+        logo = QLabel()
+        logo.setPixmap(QIcon(_asset("indir.svg")).pixmap(QSize(22, 22)))
+        logo.setFixedSize(22, 22)
+        header_layout.addWidget(logo, alignment=Qt.AlignmentFlag.AlignVCenter)
         brand = QLabel("InDir")
         brand.setObjectName("brand")
         header_layout.addWidget(brand, alignment=Qt.AlignmentFlag.AlignVCenter)
@@ -1428,7 +1475,7 @@ class ChatWindow(QMainWindow):
             self.message_panel.show_thinking_indicator()
         else:
             self.message_panel.hide_thinking_indicator()
-        self.status_label.setText(message or "Enter to send · Shift+Enter for newline")
+        self.status_label.setText(message or self._idle_status())
 
     def _worker_running(self) -> bool:
         return self.worker is not None and self.worker.isRunning()
@@ -1510,6 +1557,9 @@ class ChatWindow(QMainWindow):
             self.message_panel.append_assistant(event.content)
         elif event.type == EventType.ERROR:
             self.message_panel.append_assistant(event.content, error=True)
+        elif event.type == EventType.SCOPE_WIDENED:
+            self.widen_scope_chrome()
+            self._append_background("Scope", f"Included the whole folder ({event.content}).")
 
     def _on_approve_command(self) -> None:
         if not self._pending_tool_call_id or self._worker_running():
@@ -1543,11 +1593,15 @@ class ChatWindow(QMainWindow):
         self.status_label.setText("Type a message, or edit the command above and approve.")
 
 
-def _try_focus_existing(directory: Path) -> bool:
-    """Try to signal an existing window for this directory via a local socket."""
+def _scope_socket_name(directory: Path, focus_file: Path | None) -> str:
+    return str(focus_file or directory).replace("/", "_")
+
+
+def _try_focus_existing(directory: Path, focus_file: Path | None = None) -> bool:
+    """Try to signal an existing window for this scope via a local socket."""
     lock_dir = Path.home() / ".local" / "state" / "indir" / "sockets"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = str(directory).replace("/", "_")
+    safe_name = _scope_socket_name(directory, focus_file)
     socket_path = lock_dir / f"{safe_name}.sock"
 
     if not socket_path.exists():
@@ -1564,10 +1618,12 @@ def _try_focus_existing(directory: Path) -> bool:
         return False
 
 
-def _start_focus_server(window: ChatWindow, directory: Path) -> None:
+def _start_focus_server(
+    window: ChatWindow, directory: Path, focus_file: Path | None = None
+) -> None:
     lock_dir = Path.home() / ".local" / "state" / "indir" / "sockets"
     lock_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = str(directory).replace("/", "_")
+    safe_name = _scope_socket_name(directory, focus_file)
     socket_path = lock_dir / f"{safe_name}.sock"
     socket_path.unlink(missing_ok=True)
 
@@ -1599,11 +1655,19 @@ def _start_focus_server(window: ChatWindow, directory: Path) -> None:
     window.destroyed.connect(cleanup)
 
 
-def run_qt_ui(directory: Path, config: AppConfig) -> int:
-    if _try_focus_existing(directory):
+def run_qt_ui(
+    directory: Path, config: AppConfig, focus_file: Path | None = None
+) -> int:
+    if _try_focus_existing(directory, focus_file):
         return 0
 
     app = QApplication.instance() or QApplication([])
+    from indir.branding import APP_ID, ensure_launcher_branding
+
+    icon_path = ensure_launcher_branding()
+    app.setApplicationName("InDir")
+    app.setDesktopFileName(APP_ID)
+    app.setWindowIcon(QIcon(str(icon_path)))
     font = app.font()
     font.setFamilies(
         ["Inter", "SF Pro Text", "Segoe UI", "Ubuntu", "Cantarell", "Noto Sans", "DejaVu Sans"]
@@ -1612,11 +1676,11 @@ def run_qt_ui(directory: Path, config: AppConfig) -> int:
     # ChatWindow always opens — an unconfigured backend only disables the
     # composer and points the user at the settings dialog.
     try:
-        window = ChatWindow(directory, config)
+        window = ChatWindow(directory, config, focus_file=focus_file)
     except Exception as exc:
         QMessageBox.critical(None, "InDir", f"Failed to start: {exc}")
         return 1
 
-    _start_focus_server(window, directory)
+    _start_focus_server(window, directory, focus_file)
     window.show()
     return app.exec()

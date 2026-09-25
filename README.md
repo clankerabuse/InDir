@@ -1,6 +1,6 @@
 # InDir
 
-A right-click **AI Assistant** for **Dolphin** (KDE Plasma) and **Thunar** (Xfce) on Arch Linux. Right-click any directory, type a natural-language request, and let the AI inspect files and run shell commands in that folder.
+A right-click **AI Assistant** for **Dolphin** (KDE Plasma) and **Thunar** (Xfce) on Arch Linux. Right-click a folder or a single file, type a natural-language request, and let the AI inspect and run shell commands there. A file opens focused on that file alone; ask in the chat to include the rest of the folder when you want a wider scope.
 
 ## Quick install
 
@@ -20,8 +20,8 @@ That's it. The installer walks you through each step and **asks before making ch
 
 ## Features
 
-- **File manager integration** — "InDir" appears in the right-click menu for directories in Dolphin (Plasma 6) and Thunar
-- **Persistent chat window** — multi-turn conversation scoped to the selected directory
+- **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6) and Thunar
+- **Persistent chat window** — multi-turn conversation scoped to the selected folder, or to one file when you open a file
 - **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
 - **Safe command execution** — confirm-before-run by default; optional auto-run mode
 - **Non-blocking UI** — long commands like ffmpeg run in the background
@@ -43,7 +43,9 @@ sudo pacman -S python ollama   # ollama only if using local models
 
 ### From Dolphin or Thunar
 
-Right-click a directory → **InDir** → chat window opens.
+Right-click a folder or a file → **InDir** → chat window opens.
+
+Opening a **file** keeps the chat on that file. Ask to include the folder (or the other files) and InDir widens the scope to the parent directory.
 
 First run: click the **gear** icon and choose your backend, model, and API key.
 
@@ -57,6 +59,7 @@ Example prompts:
 
 ```bash
 indir ~/Downloads
+indir ~/Downloads/clip.webm
 indir --tui ~/Downloads
 indir --doctor          # check installation
 ```

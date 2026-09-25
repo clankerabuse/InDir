@@ -33,6 +33,9 @@ def test_upsert_creates_file(tmp_path: Path) -> None:
     assert "InDir" in text
     assert "/opt/indir/.venv/bin/indir %f" in text
     assert "<directories />" in text or "<directories/>" in text
+    assert "<other-files/>" in text
+    assert "<text-files/>" in text
+    assert "<video-files/>" in text
     assert thunar_uca.action_installed(uca)
 
 
@@ -72,3 +75,30 @@ def test_remove_action(tmp_path: Path) -> None:
     assert "InDir" not in text
     assert "Open Terminal Here" in text
     assert thunar_uca.remove_action(uca) is False
+
+
+def test_refresh_action_adds_file_types(tmp_path: Path) -> None:
+    uca = tmp_path / "uca.xml"
+    uca.write_text(
+        """<?xml version='1.0' encoding='UTF-8'?>
+<actions>
+	<action>
+		<icon>system-run</icon>
+		<name>InDir</name>
+		<unique-id>indir-thunar-1</unique-id>
+		<command>'/opt/indir/.venv/bin/indir' %f</command>
+		<description>Open InDir AI assistant in this folder</description>
+		<patterns>*</patterns>
+		<directories/>
+	</action>
+</actions>
+""",
+        encoding="utf-8",
+    )
+    icon = "/home/me/.local/share/icons/hicolor/scalable/apps/indir.svg"
+    assert thunar_uca.refresh_action_for_files(uca, icon) is True
+    text = uca.read_text(encoding="utf-8")
+    assert "<other-files/>" in text
+    assert f"<icon>{icon}</icon>" in text
+    assert "/opt/indir/.venv/bin/indir" in text
+    assert thunar_uca.refresh_action_for_files(uca, icon) is False

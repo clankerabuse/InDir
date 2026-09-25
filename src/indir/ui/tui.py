@@ -39,9 +39,15 @@ class DirectoryAITApp(App):
         ("ctrl+c", "quit", "Quit"),
     ]
 
-    def __init__(self, directory: Path, config: AppConfig) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        config: AppConfig,
+        focus_file: Path | None = None,
+    ) -> None:
         super().__init__()
         self.directory = directory
+        self.focus_file = focus_file
         self.config = config
         self.backend = None
         self.session: AgentSession | None = None
@@ -49,7 +55,9 @@ class DirectoryAITApp(App):
         self._backend_error: str | None = None
         try:
             self.backend = create_backend(config, directory)
-            self.session = AgentSession(directory, config, self.backend)
+            self.session = AgentSession(
+                directory, config, self.backend, focus_file=focus_file
+            )
         except Exception as exc:
             self._backend_error = str(exc)
 
@@ -64,12 +72,26 @@ class DirectoryAITApp(App):
                     classes="error-msg",
                 )
             else:
-                yield Static(
-                    f"Working directory: {self.directory}\nTry: \"convert webm to mp4\"",
-                    classes="system-msg",
-                )
+                if self.focus_file is not None:
+                    intro = (
+                        f"Focused file: {self.focus_file.name}\n"
+                        "Ask to include the folder if you want a wider scope."
+                    )
+                else:
+                    intro = (
+                        f"Working directory: {self.directory}\n"
+                        'Try: "convert webm to mp4"'
+                    )
+                yield Static(intro, classes="system-msg")
         with Vertical(id="input-row"):
-            yield Input(placeholder="Ask anything about this directory…", id="user-input")
+            yield Input(
+                placeholder=(
+                    "Ask about this file…"
+                    if self.focus_file is not None
+                    else "Ask anything about this directory…"
+                ),
+                id="user-input",
+            )
         yield Footer()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -108,6 +130,12 @@ class DirectoryAITApp(App):
             self._add_message(event.content, "tool-msg")
         elif event.type == EventType.ERROR:
             self._add_message(event.content, "error-msg")
+        elif event.type == EventType.SCOPE_WIDENED:
+            self.focus_file = None
+            self._add_message(
+                f"Scope widened to the whole folder ({event.content}).",
+                "system-msg",
+            )
 
     def _add_message(self, text: str, css_class: str) -> None:
         scroll = self.query_one("#chat-scroll", VerticalScroll)
@@ -167,7 +195,9 @@ class DirectoryAITApp(App):
             self._add_message(f"Error: {exc}", "error-msg")
 
 
-def run_tui(directory: Path, config: AppConfig) -> int:
-    app = DirectoryAITApp(directory, config)
+def run_tui(
+    directory: Path, config: AppConfig, focus_file: Path | None = None
+) -> int:
+    app = DirectoryAITApp(directory, config, focus_file=focus_file)
     app.run()
     return 0

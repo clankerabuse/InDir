@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 
 def normalize_path(raw: str) -> Path:
-    """Convert a file-manager URI or path string to an absolute directory Path."""
+    """Convert a file-manager URI or path string to an absolute Path."""
     if raw.startswith("file://"):
         from urllib.parse import unquote, urlparse
 
@@ -12,6 +13,24 @@ def normalize_path(raw: str) -> Path:
         path = unquote(parsed.path)
         return Path(path).resolve()
     return Path(raw).expanduser().resolve()
+
+
+@dataclass(frozen=True)
+class LaunchTarget:
+    """Where a chat is rooted. `focus_file` is set when the user opened one file."""
+
+    directory: Path
+    focus_file: Path | None = None
+
+
+def resolve_launch_target(raw: str) -> LaunchTarget:
+    """Open a folder as-is, or a file focused inside its parent folder."""
+    path = normalize_path(raw)
+    if path.is_dir():
+        return LaunchTarget(directory=path)
+    if path.is_file():
+        return LaunchTarget(directory=path.parent, focus_file=path)
+    raise FileNotFoundError(path)
 
 
 def format_size(size: int) -> str:
@@ -78,21 +97,33 @@ def build_directory_summary(directory: Path) -> str:
     return "\n".join(parts)
 
 
-def build_suggested_commands(directory: Path) -> str:
-    """Copy-paste commands for unambiguous single-file cases."""
-    if not directory.is_dir():
-        return ""
+def _files_by_extension(
+    directory: Path, focus_file: Path | None = None
+) -> dict[str, list[str]]:
+    if focus_file is not None:
+        return {focus_file.suffix.lower(): [focus_file.name]}
 
     by_ext: dict[str, list[str]] = {}
     try:
         entries = list(directory.iterdir())
     except OSError:
-        return ""
+        return {}
 
     for entry in entries:
         if entry.is_file():
             ext = entry.suffix.lower()
             by_ext.setdefault(ext, []).append(entry.name)
+    return by_ext
+
+
+def build_suggested_commands(directory: Path, focus_file: Path | None = None) -> str:
+    """Copy-paste commands for unambiguous single-file cases."""
+    if focus_file is None and not directory.is_dir():
+        return ""
+
+    by_ext = _files_by_extension(directory, focus_file)
+    if not by_ext:
+        return ""
 
     lines: list[str] = []
     if by_ext.get(".mp4") and len(by_ext[".mp4"]) == 1:
@@ -117,24 +148,18 @@ def build_suggested_commands(directory: Path) -> str:
 
     if not lines:
         return ""
-    return "## Suggested commands for this directory\n" + "\n".join(lines)
+    heading = "this file" if focus_file is not None else "this directory"
+    return f"## Suggested commands for {heading}\n" + "\n".join(lines)
 
 
-def get_suggested_command_lines(directory: Path) -> list[str]:
+def get_suggested_command_lines(
+    directory: Path, focus_file: Path | None = None
+) -> list[str]:
     """Return executable command strings for unambiguous single-file cases."""
-    if not directory.is_dir():
+    if focus_file is None and not directory.is_dir():
         return []
 
-    by_ext: dict[str, list[str]] = {}
-    try:
-        entries = list(directory.iterdir())
-    except OSError:
-        return []
-
-    for entry in entries:
-        if entry.is_file():
-            ext = entry.suffix.lower()
-            by_ext.setdefault(ext, []).append(entry.name)
+    by_ext = _files_by_extension(directory, focus_file)
 
     commands: list[str] = []
     if by_ext.get(".mp4") and len(by_ext[".mp4"]) == 1:
@@ -153,9 +178,11 @@ def get_suggested_command_lines(directory: Path) -> list[str]:
     return commands
 
 
-def resolve_run_command(directory: Path, command: str) -> str:
+def resolve_run_command(
+    directory: Path, command: str, focus_file: Path | None = None
+) -> str:
     """Prefer exact suggested commands when the model mangles filenames."""
-    suggestions = get_suggested_command_lines(directory)
+    suggestions = get_suggested_command_lines(directory, focus_file)
     if not suggestions or "ffmpeg" not in command.lower():
         return command
     if command in suggestions:
@@ -170,7 +197,47 @@ def resolve_run_command(directory: Path, command: str) -> str:
     return command
 
 
-def build_system_prompt(directory: Path) -> str:
+def _focused_file_prompt(directory: Path, focus_file: Path) -> str:
+    try:
+        size = format_size(focus_file.stat().st_size)
+    except OSError:
+        size = "unknown size"
+    suggested = build_suggested_commands(directory, focus_file)
+    suggested_block = f"\n{suggested}\n" if suggested else ""
+    return f"""You are InDir, an AI assistant focused on a single file.
+
+Focused file: {focus_file.name}
+Full path: {focus_file}
+Size: {size}
+Working directory (cwd for commands): {directory}
+{suggested_block}
+## Scope
+- This file is the only subject. Do not read, list, rename, convert, or modify any other file.
+- Refer to it by its exact basename, in double quotes.
+- If the user asks to include the folder, other files, or otherwise widen the scope, call widen_scope before that work. After it returns, the whole working directory is in scope.
+- Stay inside the working directory unless they ask to go elsewhere.
+
+## Behavior
+1. For action requests on this file, briefly say what you'll do, then call run_command in the same turn. Never ask "should I proceed?" — the UI has approve/deny.
+2. Do not call list_directory while focused on this file. Call widen_scope first if they want the rest of the folder.
+3. If a suggested command is provided above, copy it verbatim into run_command.
+4. Keep output basenames the same; only change the extension.
+5. Prefer one command: command -v TOOL && TOOL ...
+6. Keep replies short.
+
+## Recipes
+webm: command -v ffmpeg && ffmpeg -y -i "SOURCE.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "SOURCE.webm"
+mp4: command -v ffmpeg && ffmpeg -y -i "SOURCE.webm" -c:v libx264 -crf 23 -c:a aac "SOURCE.mp4"
+rename jpeg→jpg: for f in *.jpeg; do mv -- "$f" "${{f%.jpeg}}.jpg"; done
+
+## Safety
+- Commands run with cwd set to the working directory.
+- Prefer non-destructive commands. Ask before deleting/overwriting unless the user asked for it."""
+
+
+def build_system_prompt(directory: Path, focus_file: Path | None = None) -> str:
+    if focus_file is not None:
+        return _focused_file_prompt(directory, focus_file)
     # Keep the system prompt lean: summary + recipes only. Full listings come from
     # list_directory when the model actually needs them — less prefill every turn.
     summary = build_directory_summary(directory)

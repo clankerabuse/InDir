@@ -155,6 +155,11 @@ else
 fi
 
 CLI_PATH="$VENV_DIR/bin/indir"
+ICON_PATH="${HOME}/.local/share/icons/hicolor/scalable/apps/indir.svg"
+
+info "Installing application icon..."
+"$VENV_DIR/bin/python" -c "from indir.branding import ensure_launcher_branding; ensure_launcher_branding()"
+ok "Application icon installed (window icon and launcher entry)"
 
 # ── Step 2: CLI symlink ──────────────────────────────────────────────────────
 
@@ -236,17 +241,17 @@ fi
 
 if consent "Install Dolphin right-click menu" \
     "Create ${DESKTOP_FILE}
-Adds an \"InDir\" item when you right-click folders in Dolphin.
+Adds an \"InDir\" item when you right-click a file or folder in Dolphin.
 The menu runs: ${CLI_PATH} %U" \
     "y"; then
     mkdir -p "$SERVICEMENU_DIR"
     cat > "$DESKTOP_FILE" << EOF
 [Desktop Entry]
 Type=Service
-MimeType=inode/directory;
+MimeType=inode/directory;all/allfiles;
 Actions=inDir;
 X-KDE-Priority=TopLevel
-Icon=system-run
+Icon=${ICON_PATH}
 
 [Desktop Action inDir]
 Name=InDir
@@ -276,7 +281,7 @@ elif consent "Install Thunar right-click menu" \
 Existing Thunar actions are left in place.
 The menu runs: ${CLI_PATH} %f" \
     "$THUNAR_DEFAULT"; then
-    python3 "$SCRIPT_DIR/thunar_uca.py" install --cli "$CLI_PATH" --uca "$THUNAR_UCA"
+    python3 "$SCRIPT_DIR/thunar_uca.py" install --cli "$CLI_PATH" --uca "$THUNAR_UCA" --icon "$ICON_PATH"
     THUNAR_INSTALLED=1
     ok "Thunar menu installed"
 else
@@ -345,7 +350,7 @@ fi
 echo ""
 ok "Installation complete!"
 echo ""
-echo "  Use it:  right-click any folder in Dolphin or Thunar → InDir"
+echo "  Use it:  right-click a file or folder in Dolphin or Thunar → InDir"
 echo "  Then:    open the gear icon → pick backend, model, and API key"
 echo "  Test:    ${CLI_PATH} ~/Downloads"
 echo ""

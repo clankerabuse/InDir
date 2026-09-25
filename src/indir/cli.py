@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from indir.config import load_config, ensure_config_permissions
-from indir.context import normalize_path
+from indir.context import resolve_launch_target
 
 
 def _run_doctor() -> int:
@@ -33,9 +33,9 @@ def main(argv: list[str] | None = None) -> int:
         description="InDir — Dolphin/Thunar right-click AI assistant"
     )
     parser.add_argument(
-        "path",
-        nargs="?",
-        help="Directory path or file:// URI from the file manager",
+        "paths",
+        nargs="+",
+        help="File or directory path, or a file:// URI from the file manager",
     )
     parser.add_argument(
         "--tui",
@@ -58,13 +58,17 @@ def main(argv: list[str] | None = None) -> int:
     if args.doctor:
         return _run_doctor()
 
-    if not args.path:
-        parser.error("the following arguments are required: path")
+    if not args.paths:
+        parser.error("a file or directory path is required")
+    if len(args.paths) != 1:
+        print("Select a single file or folder.", file=sys.stderr)
+        return 1
 
     ensure_config_permissions(args.config)
-    directory = normalize_path(args.path)
-    if not directory.is_dir():
-        print(f"Error: {directory} is not a directory", file=sys.stderr)
+    try:
+        target = resolve_launch_target(args.paths[0])
+    except FileNotFoundError as exc:
+        print(f"Error: {exc} does not exist", file=sys.stderr)
         return 1
 
     config = load_config(args.config)
@@ -73,11 +77,11 @@ def main(argv: list[str] | None = None) -> int:
     if use_tui:
         from indir.ui.tui import run_tui
 
-        return run_tui(directory, config)
+        return run_tui(target.directory, config, focus_file=target.focus_file)
 
     from indir.ui.chat_window import run_qt_ui
 
-    return run_qt_ui(directory, config)
+    return run_qt_ui(target.directory, config, focus_file=target.focus_file)
 
 
 if __name__ == "__main__":

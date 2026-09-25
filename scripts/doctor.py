@@ -46,6 +46,13 @@ def main() -> int:
         fail("CLI not found (run ./install)")
         errors += 1
 
+    icon = Path.home() / ".local" / "share" / "icons" / "hicolor" / "scalable" / "apps" / "indir.svg"
+    desktop = Path.home() / ".local" / "share" / "applications" / "indir.desktop"
+    if icon.is_file() and desktop.is_file():
+        ok(f"Application icon: {icon}")
+    else:
+        warn("Application icon missing — launch InDir once, or re-run ./install")
+
     config_path = CONFIG_PATH if CONFIG_PATH.exists() else LEGACY_CONFIG_PATH
     if config_path.exists():
         ok(f"Config: {config_path}")
@@ -63,6 +70,10 @@ def main() -> int:
         text = menu_path.read_text(encoding="utf-8")
         if "Exec=indir " in text and "Exec=/" not in text:
             warn("Service menu uses bare 'indir' — re-run ./install to fix")
+        if "all/allfiles" not in text:
+            warn("Dolphin menu is folders only — re-run ./install to add files")
+        if "Icon=system-run" in text:
+            warn("Dolphin menu still uses a generic icon — launch InDir or re-run ./install")
         if not menu_path.stat().st_mode & 0o111:
             warn(f"Service menu not executable — run: chmod +x {menu_path}")
     elif dolphin_bin:
@@ -144,7 +155,7 @@ def main() -> int:
     if errors:
         print(f"{errors} issue(s) found.")
         return 1
-    print("All checks passed. Right-click a folder → InDir → gear icon for backend settings")
+    print("All checks passed. Right-click a file or folder → InDir")
     return 0
 
 

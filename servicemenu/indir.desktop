@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Service
-MimeType=inode/directory;
+MimeType=inode/directory;all/allfiles;
 Actions=inDir;
 X-KDE-Priority=TopLevel
-Icon=system-run
+Icon=indir
 
 [Desktop Action inDir]
 Name=InDir
