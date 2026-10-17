@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QTextEdit,
     QToolButton,
@@ -63,6 +64,180 @@ ASSETS_DIR = Path(__file__).resolve().parent / "assets"
 
 def _asset(name: str) -> str:
     return (ASSETS_DIR / name).as_posix()
+
+
+def filter_model_names(models: list[str], query: str) -> list[str]:
+    """Case-insensitive substring filter over model ids from any provider."""
+    needle = query.strip().lower()
+    if not needle:
+        return list(models)
+    return [name for name in models if needle in name.lower()]
+
+
+class ModelComboBox(QComboBox):
+    """Model picker whose dropdown includes a search field.
+
+    The closed control still shows the selected model. Opening the dropdown
+    reveals a small search bar that hides non-matching rows.
+    """
+
+    # Fusion's non-editable popup mode ignores this and grows to the screen.
+    _MAX_VISIBLE_MODELS = 12
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.setMaxVisibleItems(self._MAX_VISIBLE_MODELS)
+        # Keep the normal scrolling list. Without this, Fusion shows every
+        # model and the menu stretches to the full screen height.
+        self.setStyleSheet("QComboBox { combobox-popup: 0; }")
+        self._search = QLineEdit()
+        self._search.setObjectName("modelSearch")
+        self._search.setPlaceholderText("Search models…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setStyleSheet(
+            "QLineEdit#modelSearch {"
+            " background: #161c27; color: #e2e8f4;"
+            " border: 1px solid #212938; border-radius: 6px;"
+            " padding: 4px 8px; font-size: 12px;"
+            " selection-background-color: #3b4f8f;"
+            "}"
+            "QLineEdit#modelSearch:focus { border: 1px solid #6d7dff; }"
+        )
+        self._search.textChanged.connect(self._apply_filter)
+        self._search.installEventFilter(self)
+        self._search_host: QWidget | None = None
+
+    def showPopup(self) -> None:  # noqa: N802 (Qt override)
+        if not self.isEnabled() or self.count() == 0:
+            return
+        self._reset_filter()
+        # Keep the search out of Qt's popup sizing, then add it back below.
+        if self._search_host is not None:
+            self._search_host.hide()
+        super().showPopup()
+        self._ensure_search()
+        container = self.view().parentWidget()
+        if container is None:
+            return
+        geo = container.geometry()
+        search_height = self._search_host.sizeHint().height() if self._search_host else 0
+        # The popup is sized for the list. Grow it for the search bar, then
+        # keep it to about a dozen rows so a long catalog cannot fill the screen.
+        height = min(geo.height() + search_height, self._popup_height_cap(search_height))
+        y = geo.y()
+        screen = self.screen().availableGeometry() if self.screen() else None
+        if screen is not None:
+            height = min(height, max(search_height + 48, screen.height() // 2))
+            if y + height > screen.bottom():
+                y = max(screen.top(), screen.bottom() - height)
+        container.setMaximumHeight(height)
+        container.setGeometry(geo.x(), y, max(geo.width(), self.width()), height)
+        if self._search_host is not None:
+            self._search_host.show()
+        self._search.setFocus()
+
+    def hidePopup(self) -> None:  # noqa: N802 (Qt override)
+        self._reset_filter()
+        super().hidePopup()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 (Qt override)
+        if watched is self._search and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Down:
+                self._move_highlight(1)
+                return True
+            if key == Qt.Key.Key_Up:
+                self._move_highlight(-1)
+                return True
+            if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                self._accept_highlight()
+                return True
+            if key == Qt.Key.Key_Escape:
+                self.hidePopup()
+                return True
+        return super().eventFilter(watched, event)
+
+    def _popup_height_cap(self, search_height: int) -> int:
+        view = self.view()
+        visible_rows = min(self.maxVisibleItems(), max(self.count(), 1))
+        row_height = view.sizeHintForRow(0)
+        if row_height <= 0 and self.count() > 0:
+            row_height = view.visualRect(self.model().index(0, 0)).height()
+        if row_height <= 0:
+            row_height = self.fontMetrics().height() + 8
+        margins = view.contentsMargins()
+        list_height = row_height * visible_rows + margins.top() + margins.bottom()
+        list_height += view.frameWidth() * 2
+        return list_height + search_height + 8
+
+    def _ensure_search(self) -> None:
+        container = self.view().parentWidget()
+        layout = container.layout() if container is not None else None
+        if container is None or layout is None or self._search_host is not None:
+            return
+        host = QWidget(container)
+        host.setObjectName("modelSearchHost")
+        host.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        host.setStyleSheet(
+            "QWidget#modelSearchHost {"
+            " background: #151b28;"
+            " border-bottom: 1px solid #2b3548;"
+            "}"
+        )
+        host_layout = QVBoxLayout(host)
+        host_layout.setContentsMargins(6, 6, 6, 4)
+        host_layout.setSpacing(0)
+        host_layout.addWidget(self._search)
+        layout.insertWidget(0, host)
+        self._search_host = host
+
+    def _reset_filter(self) -> None:
+        self._search.blockSignals(True)
+        self._search.clear()
+        self._search.blockSignals(False)
+        view = self.view()
+        for index in range(self.count()):
+            view.setRowHidden(index, False)
+
+    def _apply_filter(self, query: str) -> None:
+        names = [self.itemText(index) for index in range(self.count())]
+        visible = set(filter_model_names(names, query))
+        view = self.view()
+        first_visible = -1
+        for index, name in enumerate(names):
+            hidden = name not in visible
+            view.setRowHidden(index, hidden)
+            if not hidden and first_visible < 0:
+                first_visible = index
+        if first_visible >= 0:
+            view.setCurrentIndex(view.model().index(first_visible, 0))
+
+    def _visible_rows(self) -> list[int]:
+        view = self.view()
+        return [index for index in range(self.count()) if not view.isRowHidden(index)]
+
+    def _move_highlight(self, delta: int) -> None:
+        rows = self._visible_rows()
+        if not rows:
+            return
+        view = self.view()
+        current = view.currentIndex().row()
+        if current in rows:
+            position = rows.index(current)
+            position = max(0, min(len(rows) - 1, position + delta))
+        else:
+            position = 0 if delta > 0 else len(rows) - 1
+        view.setCurrentIndex(view.model().index(rows[position], 0))
+        view.scrollTo(view.currentIndex())
+
+    def _accept_highlight(self) -> None:
+        view = self.view()
+        row = view.currentIndex().row()
+        if row < 0 or view.isRowHidden(row):
+            return
+        self.setCurrentIndex(row)
+        self.hidePopup()
 
 
 class ModelFetchWorker(QThread):
@@ -702,8 +877,7 @@ class SettingsDialog(QDialog):
         key_row.addWidget(self.reveal_btn)
         form.addRow(self.api_key_row_label, key_row)
 
-        self.model_combo = QComboBox()
-        self.model_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.model_combo = ModelComboBox()
         self.fetch_models_btn = QPushButton("Fetch models")
         self.fetch_models_btn.setObjectName("secondaryButton")
         self.fetch_models_btn.clicked.connect(self._on_fetch_models)
