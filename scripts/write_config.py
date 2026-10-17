@@ -8,6 +8,7 @@ This script only seeds a usable default config.toml.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -132,8 +133,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     content = build_config(args.provider, args.model, args.api_key)
-    args.output.write_text(content, encoding="utf-8")
-    args.output.chmod(0o600)
+    # Create owner-only from the first byte: the file holds an API key.
+    fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
     print(f"Wrote {args.output}")
     return 0
 

@@ -6,6 +6,11 @@ from typing import Any
 import httpx
 
 from indir.backends.base import ChatBackend, ChatMessage, ChatResponse, ToolCall
+from indir.backends.model_catalog import (
+    OPENCODE_SESSION_HEADER,
+    is_opencode_gateway,
+    new_opencode_session_id,
+)
 from indir.config import OpenAIConfig
 
 
@@ -16,12 +21,20 @@ class OpenAICompatBackend(ChatBackend):
                 f"Missing API key: set {config.api_key_env} or api_key in config"
             )
         self.config = config
+        # OpenCode's gateways reject chat/completions without a session id, so
+        # send one per conversation (one backend instance = one chat).
+        self._session_id = (
+            new_opencode_session_id() if is_opencode_gateway(config.base_url) else None
+        )
         self.client = self._make_client()
 
     def _make_client(self) -> httpx.Client:
+        headers = {"Authorization": f"Bearer {self.config.resolved_api_key()}"}
+        if self._session_id:
+            headers[OPENCODE_SESSION_HEADER] = self._session_id
         return httpx.Client(
             base_url=self.config.base_url,
-            headers={"Authorization": f"Bearer {self.config.resolved_api_key()}"},
+            headers=headers,
             timeout=120.0,
         )
 

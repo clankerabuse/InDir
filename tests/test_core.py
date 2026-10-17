@@ -92,7 +92,8 @@ def test_focused_file_prompt_hides_siblings(tmp_path: Path) -> None:
     assert "other.mp4" not in prompt
     assert "widen_scope" in prompt
     assert "single file" in prompt
-    assert 'ffmpeg -y -i "clip.webm"' in prompt
+    # Filenames are shell-quoted when needed (shlex.quote), plain when not.
+    assert "ffmpeg -y -i clip.webm" in prompt
 
 
 def test_resolve_run_command_uses_focused_file_among_siblings(tmp_path: Path) -> None:

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import os
 import socket
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -1205,8 +1208,14 @@ class ChatWindow(QMainWindow):
 
     def _apply_dark_theme(self) -> None:
         style = """
-            QMainWindow, QDialog, QMessageBox { background: #0b0e14; }
             QWidget { color: #e2e8f4; font-size: 13px; background: transparent; }
+
+            /* Container backgrounds must come AFTER the generic QWidget rule above:
+               both selectors have the same specificity, so whichever is written last
+               wins. When this block came first, dialogs and message boxes ended up
+               with a fully transparent background and the desktop showed through the
+               settings window. */
+            QMainWindow, QDialog, QMessageBox { background: #0b0e14; }
 
             QToolTip {
                 background: #1b2230; color: #cdd6e6;
@@ -1767,16 +1776,40 @@ class ChatWindow(QMainWindow):
         self.status_label.setText("Type a message, or edit the command above and approve.")
 
 
-def _scope_socket_name(directory: Path, focus_file: Path | None) -> str:
-    return str(focus_file or directory).replace("/", "_")
+# Linux caps a unix socket path at 108 bytes (sun_path, including the NUL), and
+# a real scope path below the state dir blows past that for ordinary names:
+# "~/Downloads/Arrested Development - Charlie Brown moments [oabcM9SOF-E].webm"
+# binds to a 118-byte path and dies with "AF_UNIX path too long" before the
+# window is ever shown. Hash the scope instead of embedding it.
+_AF_UNIX_PATH_LIMIT = 107
+
+
+def _socket_dir() -> Path:
+    """Where per-scope sockets live.
+
+    Prefer XDG_RUNTIME_DIR: it is private, wiped at logout (so no stale sockets
+    pile up) and short enough to leave room under the AF_UNIX path cap.
+    """
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if runtime:
+        return Path(runtime) / "indir" / "sockets"
+    return Path.home() / ".local" / "state" / "indir" / "sockets"
+
+
+def _scope_socket_path(directory: Path, focus_file: Path | None) -> Path:
+    """Socket file representing one chat scope (one window)."""
+    lock_dir = _socket_dir()
+    digest = hashlib.sha256(os.fsencode(str(focus_file or directory))).hexdigest()
+    for width in (32, 16, 8):
+        candidate = lock_dir / f"scope-{digest[:width]}.sock"
+        if len(os.fsencode(candidate)) <= _AF_UNIX_PATH_LIMIT:
+            return candidate
+    return lock_dir / f"scope-{digest[:8]}.sock"
 
 
 def _try_focus_existing(directory: Path, focus_file: Path | None = None) -> bool:
     """Try to signal an existing window for this scope via a local socket."""
-    lock_dir = Path.home() / ".local" / "state" / "indir" / "sockets"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = _scope_socket_name(directory, focus_file)
-    socket_path = lock_dir / f"{safe_name}.sock"
+    socket_path = _scope_socket_path(directory, focus_file)
 
     if not socket_path.exists():
         return False
@@ -1795,28 +1828,52 @@ def _try_focus_existing(directory: Path, focus_file: Path | None = None) -> bool
 def _start_focus_server(
     window: ChatWindow, directory: Path, focus_file: Path | None = None
 ) -> None:
-    lock_dir = Path.home() / ".local" / "state" / "indir" / "sockets"
-    lock_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = _scope_socket_name(directory, focus_file)
-    socket_path = lock_dir / f"{safe_name}.sock"
+    """Let a later launch raise this window instead of opening a duplicate.
+
+    Never fatal: if the socket cannot be set up the window still opens, it just
+    won't be re-focused by a second right-click on the same scope.
+    """
+    lock_dir = _socket_dir()
+    # 0700: another local user must not be able to reach the socket (they could
+    # otherwise freeze the GUI or raise the window).
+    lock_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(lock_dir, 0o700)
+    socket_path = _scope_socket_path(directory, focus_file)
     socket_path.unlink(missing_ok=True)
 
     server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    server.bind(str(socket_path))
-    server.listen(1)
-    server.setblocking(False)
+    try:
+        server.bind(str(socket_path))
+        server.listen(1)
+        server.setblocking(False)
+        os.chmod(socket_path, 0o600)
+    except OSError as exc:
+        server.close()
+        print(f"indir: single-window signalling unavailable ({exc})", file=sys.stderr)
+        return
 
     from PySide6.QtCore import QTimer
 
     def check_socket() -> None:
         try:
             conn, _ = server.accept()
-            conn.recv(64)
+        except BlockingIOError:
+            return
+        # Only the listener is non-blocking; an accepted socket blocks by default,
+        # and this runs on the Qt main thread — a peer that connects and sends
+        # nothing would otherwise hang the whole window. Focus is granted only
+        # when the peer actually sent something.
+        data = b""
+        conn.settimeout(0.2)
+        try:
+            data = conn.recv(64)
+        except OSError:
+            pass
+        finally:
             conn.close()
+        if data:
             window.raise_()
             window.activateWindow()
-        except BlockingIOError:
-            pass
 
     timer = QTimer(window)
     timer.timeout.connect(check_socket)
@@ -1855,6 +1912,7 @@ def run_qt_ui(
         QMessageBox.critical(None, "InDir", f"Failed to start: {exc}")
         return 1
 
-    _start_focus_server(window, directory, focus_file)
+    # Show first: the window must appear even if single-window signalling fails.
     window.show()
+    _start_focus_server(window, directory, focus_file)
     return app.exec()

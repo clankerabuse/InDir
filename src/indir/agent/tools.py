@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import fnmatch
+import os
+import re
 import subprocess
 import threading
 from collections.abc import Callable
@@ -22,19 +24,46 @@ class CommandResult:
     block_reason: str | None = None
 
 
+def _squeeze(command: str) -> str:
+    """Case-folded command with all whitespace and backslashes removed.
+
+    Used for blocklist matching only: `rm -rf  /`, `r\\m -rf /` and `:(){:|:&};:`
+    then normalise to the same form as their blocklist entries.
+    """
+    return re.sub(r"[\s\\]", "", command.lower())
+
+
 def is_command_blocked(command: str, blocklist: list[str]) -> str | None:
-    normalized = command.strip().lower()
+    """Best-effort speed bump, NOT a security boundary.
+
+    Shell quoting, variable expansion (`$(echo rm) -rf /`), flag reordering
+    (`rm --recursive --force /`) and anything not on the list (dd, curl|sh,
+    git clean -fdx) all get through. Confirm mode, where the user sees and
+    approves the exact command, is the control that matters.
+    """
+    squeezed = _squeeze(command)
     for pattern in blocklist:
-        if pattern.lower() in normalized:
+        needle = _squeeze(pattern)
+        if needle and needle in squeezed:
             return pattern
     return None
+
+
+def _single_line(text: str) -> str:
+    """Collapse a command to one log line so it cannot forge extra entries."""
+    return " ".join(text.replace("\r", "\n").split())
 
 
 def log_command(directory: Path, command: str, returncode: int) -> None:
     ensure_state_dir()
     timestamp = datetime.now(timezone.utc).isoformat()
-    with HISTORY_LOG.open("a", encoding="utf-8") as f:
-        f.write(f"{timestamp} | {directory} | rc={returncode} | {command}\n")
+    # O_CREAT with 0o600 so the audit log is never briefly world-readable, and one
+    # line per entry: the command is attacker-influenced (filenames reach it).
+    fd = os.open(HISTORY_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+    with os.fdopen(fd, "a", encoding="utf-8") as handle:
+        handle.write(
+            f"{timestamp} | {directory} | rc={returncode} | {_single_line(command)}\n"
+        )
 
 
 def list_directory(directory: Path, pattern: str | None = None) -> str:
@@ -76,6 +105,8 @@ def run_command(
 ) -> CommandResult:
     block_reason = is_command_blocked(command, config.blocklist)
     if block_reason:
+        # Blocked attempts are the interesting ones for an audit trail.
+        log_command(directory, command, -1)
         return CommandResult(
             command=command,
             stdout="",

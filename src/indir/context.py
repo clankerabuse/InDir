@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -91,7 +92,9 @@ def build_directory_summary(directory: Path) -> str:
     for ext in sorted(by_ext):
         names = by_ext[ext]
         if len(names) == 1:
-            parts.append(f"- 1 {ext} file: {names[0]}")
+            # The name is interpolated into the system prompt: drop control
+            # characters so a crafted filename cannot forge prompt structure.
+            parts.append(f"- 1 {ext} file: {_command_safe_name(names[0])}")
         else:
             parts.append(f"- {len(names)} {ext} files")
     return "\n".join(parts)
@@ -116,39 +119,66 @@ def _files_by_extension(
     return by_ext
 
 
+def _command_safe_name(name: str) -> str:
+    """Filename that is safe on a shell command line and inside the model prompt.
+
+    Spaces, quotes and shell metacharacters are handled by shlex.quote() at the
+    point of use; control characters are dropped here because a newline in a
+    filename would forge prompt structure (the name is interpolated into the
+    system prompt) and cannot survive a single-line command anyway. A name that
+    loses characters simply fails to match a real file, which is a safe failure.
+    """
+    return "".join(char for char in name if char.isprintable())
+
+
+def _conversion_commands(
+    directory: Path, focus_file: Path | None = None
+) -> list[tuple[str, str]]:
+    """(description, command) pairs for the unambiguous single-file conversions.
+
+    One builder feeds both the prompt text and the executable suggestion, so the
+    string the model is told to copy is byte-identical to the one the agent may
+    run. Filenames are quoted with shlex.quote: they are attacker-controlled
+    (a directory can hold a file named `x"; rm -rf ~; echo ".mp4`) and these
+    commands run through `subprocess.Popen(..., shell=True)`.
+    """
+    by_ext = _files_by_extension(directory, focus_file)
+    pairs: list[tuple[str, str]] = []
+
+    if by_ext.get(".mp4") and len(by_ext[".mp4"]) == 1:
+        name = _command_safe_name(by_ext[".mp4"][0])
+        out = str(Path(name).with_suffix(".webm"))
+        pairs.append(
+            (
+                "Convert mp4 → webm (copy this command exactly; do not change the filenames):",
+                f"command -v ffmpeg && ffmpeg -y -i {shlex.quote(name)} -c:v libvpx-vp9 "
+                f"-crf 32 -b:v 0 -c:a libopus {shlex.quote(out)}",
+            )
+        )
+    if by_ext.get(".webm") and len(by_ext[".webm"]) == 1:
+        name = _command_safe_name(by_ext[".webm"][0])
+        out = str(Path(name).with_suffix(".mp4"))
+        pairs.append(
+            (
+                "Convert webm → mp4 (copy this command exactly; do not change the filenames):",
+                f"command -v ffmpeg && ffmpeg -y -i {shlex.quote(name)} -c:v libx264 "
+                f"-crf 23 -c:a aac {shlex.quote(out)}",
+            )
+        )
+    return pairs
+
+
 def build_suggested_commands(directory: Path, focus_file: Path | None = None) -> str:
     """Copy-paste commands for unambiguous single-file cases."""
     if focus_file is None and not directory.is_dir():
         return ""
 
-    by_ext = _files_by_extension(directory, focus_file)
-    if not by_ext:
+    pairs = _conversion_commands(directory, focus_file)
+    if not pairs:
         return ""
 
-    lines: list[str] = []
-    if by_ext.get(".mp4") and len(by_ext[".mp4"]) == 1:
-        name = by_ext[".mp4"][0]
-        out = str(Path(name).with_suffix(".webm"))
-        lines.append(
-            "Convert mp4 → webm (copy this command exactly; do not change the filenames):"
-        )
-        lines.append(
-            f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libvpx-vp9 -crf 32 -b:v 0 '
-            f'-c:a libopus "{out}"'
-        )
-    if by_ext.get(".webm") and len(by_ext[".webm"]) == 1:
-        name = by_ext[".webm"][0]
-        out = str(Path(name).with_suffix(".mp4"))
-        lines.append(
-            "Convert webm → mp4 (copy this command exactly; do not change the filenames):"
-        )
-        lines.append(
-            f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libx264 -crf 23 -c:a aac "{out}"'
-        )
-
-    if not lines:
-        return ""
     heading = "this file" if focus_file is not None else "this directory"
+    lines = [line for pair in pairs for line in pair]
     return f"## Suggested commands for {heading}\n" + "\n".join(lines)
 
 
@@ -159,23 +189,7 @@ def get_suggested_command_lines(
     if focus_file is None and not directory.is_dir():
         return []
 
-    by_ext = _files_by_extension(directory, focus_file)
-
-    commands: list[str] = []
-    if by_ext.get(".mp4") and len(by_ext[".mp4"]) == 1:
-        name = by_ext[".mp4"][0]
-        out = str(Path(name).with_suffix(".webm"))
-        commands.append(
-            f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libvpx-vp9 -crf 32 -b:v 0 '
-            f'-c:a libopus "{out}"'
-        )
-    if by_ext.get(".webm") and len(by_ext[".webm"]) == 1:
-        name = by_ext[".webm"][0]
-        out = str(Path(name).with_suffix(".mp4"))
-        commands.append(
-            f'command -v ffmpeg && ffmpeg -y -i "{name}" -c:v libx264 -crf 23 -c:a aac "{out}"'
-        )
-    return commands
+    return [command for _, command in _conversion_commands(directory, focus_file)]
 
 
 def resolve_run_command(
@@ -204,12 +218,17 @@ def _focused_file_prompt(directory: Path, focus_file: Path) -> str:
         size = "unknown size"
     suggested = build_suggested_commands(directory, focus_file)
     suggested_block = f"\n{suggested}\n" if suggested else ""
+    # Paths and names come from the file the user opened; strip control characters
+    # so they cannot forge prompt structure.
+    safe_name = _command_safe_name(focus_file.name)
+    safe_path = _command_safe_name(str(focus_file))
+    safe_dir = _command_safe_name(str(directory))
     return f"""You are InDir, an AI assistant focused on a single file.
 
-Focused file: {focus_file.name}
-Full path: {focus_file}
+Focused file: {safe_name}
+Full path: {safe_path}
 Size: {size}
-Working directory (cwd for commands): {directory}
+Working directory (cwd for commands): {safe_dir}
 {suggested_block}
 ## Scope
 - This file is the only subject. Do not read, list, rename, convert, or modify any other file.
@@ -243,9 +262,10 @@ def build_system_prompt(directory: Path, focus_file: Path | None = None) -> str:
     summary = build_directory_summary(directory)
     suggested = build_suggested_commands(directory)
     suggested_block = f"\n{suggested}\n" if suggested else ""
+    safe_dir = _command_safe_name(str(directory))
     return f"""You are InDir, an AI assistant scoped to one directory on the user's machine.
 
-Working directory: {directory}
+Working directory: {safe_dir}
 
 File summary:
 {summary}

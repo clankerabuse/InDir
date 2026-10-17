@@ -79,7 +79,12 @@ class OpenCodeConfig:
     model: str = "kimi-k2.6"
 
     def resolved_api_key(self) -> str | None:
-        return _resolve_api_key(self.api_key, self.api_key_env)
+        # OpenCode's own tooling stores the Go subscription key as
+        # OPENCODE_GO_API_KEY, so accept that name when the configured env var
+        # (OPENCODE_API_KEY by default) is not set either.
+        return _resolve_api_key(self.api_key, self.api_key_env) or os.environ.get(
+            "OPENCODE_GO_API_KEY"
+        )
 
 
 @dataclass
@@ -235,12 +240,28 @@ def config_to_toml(config: AppConfig) -> str:
     return "\n".join(lines)
 
 
+def _write_private_file(path: Path, text: str) -> None:
+    """Write a file that is owner-only from its first byte.
+
+    Path.write_text() would create the file with the process umask (0644) and any
+    API key in it would be world-readable until a later chmod — and forever if the
+    process dies in between.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)  # also tightens a pre-existing 0644 file
+    except OSError:
+        os.close(fd)
+        raise
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
+
+
 def save_config(config: AppConfig, path: Path | None = None) -> Path:
     """Write an AppConfig to disk as TOML, creating the config dir if needed."""
     config_path = path or _resolve_config_path(None)
     config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(config_to_toml(config), encoding="utf-8")
-    config_path.chmod(0o600)
+    _write_private_file(config_path, config_to_toml(config))
     return config_path
 
 
