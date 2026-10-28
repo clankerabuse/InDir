@@ -24,6 +24,7 @@ def test_list_cursor_models_requires_api_key() -> None:
 
 
 def test_list_cursor_models_returns_sorted_ids() -> None:
+    pytest.importorskip("cursor_sdk")  # optional extra: pip install -e ".[cursor]"
     mock_models = [
         MagicMock(id="composer-2.5"),
         MagicMock(id="auto"),
