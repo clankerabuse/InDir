@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         help="File or directory path, or a file:// URI from the file manager",
     )
     parser.add_argument(
