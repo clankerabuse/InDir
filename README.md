@@ -20,7 +20,7 @@ That's it. The installer walks you through each step and **asks before making ch
 
 ## Features
 
-- **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6) and Thunar
+- **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6), Thunar and Nautilus (GNOME Files)
 - **Persistent chat window** — multi-turn conversation scoped to the selected folder, or to one file when you open a file
 - **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
 - **Safe command execution** — confirm-before-run by default; optional auto-run mode
@@ -30,18 +30,19 @@ That's it. The installer walks you through each step and **asks before making ch
 ## Requirements
 
 - Python 3.11+
-- Dolphin (KDE Plasma 6) and/or Thunar
+- Dolphin (KDE Plasma 6), Thunar and/or Nautilus (GNOME Files; needs `nautilus-python`)
 - One AI backend (configure in settings after install)
 
 Optional Arch packages:
 
 ```bash
 sudo pacman -S python ollama   # ollama only if using local models
+sudo pacman -S nautilus-python # only for the Nautilus right-click menu
 ```
 
 ## Usage
 
-### From Dolphin or Thunar
+### From Dolphin, Thunar or Nautilus
 
 Right-click a folder or a file → **InDir** → chat window opens.
 
@@ -105,6 +106,8 @@ indir --doctor    # or: make doctor
 | Problem | Fix |
 |---------|-----|
 | "Could not find indir" in Dolphin/Thunar | Re-run `./install` (uses full path in menu) |
+| No InDir item in Nautilus | Install `nautilus-python`, re-run `./install`, then `nautilus -q` |
+| Nautilus item does nothing | `nautilus -q`, or run `python3 scripts/nautilus_ext.py check` |
 | Backend error / connection refused | Open settings (gear) and check provider; for Ollama run `ollama serve` |
 | API key missing from file manager | Open settings (gear) and save the key, or set it in config |
 | Menu not showing | Restart Dolphin or Thunar (`thunar -q`), or run `./install` again |

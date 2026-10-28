@@ -33,6 +33,7 @@ INTERACTIVE=1
 FORCE_CONFIG=0
 SKIP_DOLPHIN_RESTART=0
 SKIP_THUNAR_RESTART=0
+SKIP_NAUTILUS_RESTART=0
 
 # Returns 0 if user consents (or non-interactive / -y auto-accepts).
 consent() {
@@ -67,7 +68,7 @@ usage() {
     cat <<EOF
 Usage: ./install [options]
 
-One-command setup for InDir on Arch (Dolphin and/or Thunar).
+One-command setup for InDir on Arch (Dolphin, Thunar and/or Nautilus).
 
 Installs the app and file-manager menus. Backend, model, and API keys
 are configured later in the InDir settings UI (gear icon).
@@ -80,6 +81,7 @@ Options:
   --reset-config         Overwrite config with starter defaults
   --skip-dolphin-restart Don't attempt to restart Dolphin
   --skip-thunar-restart  Don't attempt to restart Thunar
+  --skip-nautilus-restart Don't attempt to restart Nautilus
   -h, --help             Show this help
 
 Examples:
@@ -94,6 +96,7 @@ while [[ $# -gt 0 ]]; do
         --reset-config|--reconfigure) FORCE_CONFIG=1; shift ;;
         --skip-dolphin-restart) SKIP_DOLPHIN_RESTART=1; shift ;;
         --skip-thunar-restart) SKIP_THUNAR_RESTART=1; shift ;;
+        --skip-nautilus-restart) SKIP_NAUTILUS_RESTART=1; shift ;;
         --provider|--model|--api-key)
             die "Backend options removed — choose provider/model/API key in the InDir settings UI after install"
             ;;
@@ -106,7 +109,7 @@ done
 
 echo ""
 echo "  InDir — installer"
-echo "  Right-click AI assistant for Dolphin and Thunar"
+echo "  Right-click AI assistant for Dolphin, Thunar and Nautilus"
 echo ""
 if [[ "$INTERACTIVE" -eq 1 ]] && [[ -t 0 ]]; then
     echo "  Each step below will ask for your consent before making changes."
@@ -288,6 +291,28 @@ else
     skip "Thunar custom action"
 fi
 
+# ── Step 6c: Nautilus extension ──────────────────────────────────────────────
+
+HAS_NAUTILUS=0
+command -v nautilus &>/dev/null && HAS_NAUTILUS=1
+NAUTILUS_DEFAULT="n"
+[[ "$HAS_NAUTILUS" -eq 1 ]] && NAUTILUS_DEFAULT="y"
+
+NAUTILUS_INSTALLED=0
+if [[ "$HAS_NAUTILUS" -eq 0 ]] && [[ "$INTERACTIVE" -eq 0 ]]; then
+    skip "Nautilus extension (Nautilus not installed)"
+elif consent "Install Nautilus right-click menu" \
+    "Add an \"InDir\" item to Nautilus (GNOME Files):
+  ${HOME}/.local/share/nautilus-python/extensions/indir_nautilus.py
+Requires the nautilus-python package. The menu runs: ${CLI_PATH} <selected item>" \
+    "$NAUTILUS_DEFAULT"; then
+    python3 "$SCRIPT_DIR/nautilus_ext.py" install --cli "$CLI_PATH"
+    NAUTILUS_INSTALLED=1
+    ok "Nautilus menu installed"
+else
+    skip "Nautilus extension"
+fi
+
 # ── Step 7: restart Dolphin ──────────────────────────────────────────────────
 
 if [[ "$SKIP_DOLPHIN_RESTART" -eq 0 ]] && [[ -f "$DESKTOP_FILE" ]]; then
@@ -332,6 +357,23 @@ Open Thunar windows will close (thunar -q)." \
     fi
 fi
 
+# ── Step 7c: restart Nautilus ────────────────────────────────────────────────
+
+if [[ "$SKIP_NAUTILUS_RESTART" -eq 0 ]] && [[ "$NAUTILUS_INSTALLED" -eq 1 ]]; then
+    if pgrep -x nautilus &>/dev/null; then
+        if consent "Restart Nautilus" \
+            "Quit Nautilus so it picks up the new extension.
+Open Nautilus windows will close (nautilus -q); it reopens on next use." \
+            "y"; then
+            info "Restarting Nautilus..."
+            nautilus -q 2>/dev/null || true
+            ok "Nautilus restarted"
+        else
+            skip "Nautilus restart — run 'nautilus -q' manually"
+        fi
+    fi
+fi
+
 # ── Step 8: health check ─────────────────────────────────────────────────────
 
 echo ""
@@ -350,7 +392,7 @@ fi
 echo ""
 ok "Installation complete!"
 echo ""
-echo "  Use it:  right-click a file or folder in Dolphin or Thunar → InDir"
+echo "  Use it:  right-click a file or folder in Dolphin, Thunar or Nautilus → InDir"
 echo "  Then:    open the gear icon → pick backend, model, and API key"
 echo "  Test:    ${CLI_PATH} ~/Downloads"
 echo ""
