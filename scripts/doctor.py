@@ -18,6 +18,13 @@ LEGACY_SERVICEMENU_PATH = (
 )
 THUNAR_UCA_PATH = Path.home() / ".config" / "Thunar" / "uca.xml"
 THUNAR_UNIQUE_ID = "indir-thunar-1"
+NAUTILUS_EXTENSION_PATH = (
+    Path.home() / ".local" / "share" / "nautilus-python" / "extensions" / "indir_nautilus.py"
+)
+NAUTILUS_SUPPORT_PATH = (
+    Path.home() / ".local" / "share" / "nautilus-python" / "indir_nautilus_support.py"
+)
+NAUTILUS_BRIDGE_PATH = Path("/usr/lib/nautilus/extensions-4/libnautilus-python.so")
 LOCAL_BIN = Path.home() / ".local" / "bin" / "indir"
 
 
@@ -97,7 +104,23 @@ def main() -> int:
     else:
         warn("Thunar not installed — skipped Thunar menu check")
 
-    if not dolphin_ok and not thunar_ok and (dolphin_bin or thunar_bin):
+    nautilus_bin = shutil.which("nautilus")
+    nautilus_ok = NAUTILUS_EXTENSION_PATH.is_file() and NAUTILUS_SUPPORT_PATH.is_file()
+    if nautilus_ok:
+        ok(f"Nautilus extension: {NAUTILUS_EXTENSION_PATH}")
+        if not NAUTILUS_BRIDGE_PATH.exists():
+            warn(
+                "nautilus-python missing — Nautilus will not load the extension "
+                "(sudo pacman -S nautilus-python)"
+            )
+    elif NAUTILUS_EXTENSION_PATH.exists():
+        warn("Nautilus extension is incomplete — re-run ./install")
+    elif nautilus_bin:
+        warn("Nautilus extension missing — re-run ./install to add it")
+    else:
+        warn("Nautilus not installed — skipped Nautilus menu check")
+
+    if not (dolphin_ok or thunar_ok or nautilus_ok) and (dolphin_bin or thunar_bin or nautilus_bin):
         fail("No file-manager menu installed — re-run ./install")
         errors += 1
 
