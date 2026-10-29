@@ -1,6 +1,6 @@
 # InDir
 
-A right-click **AI Assistant** for **Dolphin** (KDE Plasma) and **Thunar** (Xfce) on Arch Linux. Right-click a folder or a single file, type a natural-language request, and let the AI inspect and run shell commands there. A file opens focused on that file alone; ask in the chat to include the rest of the folder when you want a wider scope.
+A right-click **AI Assistant** for **Dolphin** (KDE Plasma), **Thunar** (Xfce), and **Nautilus** (GNOME Files) on Arch Linux. Right-click a folder or a single file, type a natural-language request, and let the AI inspect and run shell commands there. A file opens focused on that file alone; ask in the chat to include the rest of the folder when you want a wider scope.
 
 ## Quick install
 
@@ -10,7 +10,7 @@ cd indir
 ./install
 ```
 
-That's it. The installer walks you through each step and **asks before making changes** (venv, starter config, file permissions, Dolphin/Thunar menus, etc.). Backend, model, and API keys are configured afterward in the **settings UI** (gear icon).
+That's it. The installer walks you through each step and **asks before making changes** (venv, starter config, file permissions, Dolphin/Thunar/Nautilus menus, etc.). Backend, model, and API keys are configured afterward in the **settings UI** (gear icon).
 
 **Non-interactive install:**
 
@@ -20,7 +20,7 @@ That's it. The installer walks you through each step and **asks before making ch
 
 ## Features
 
-- **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6) and Thunar
+- **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6), Thunar, and Nautilus/Files (GNOME)
 - **Persistent chat window** — multi-turn conversation scoped to the selected folder, or to one file when you open a file
 - **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
 - **Safe command execution** — confirm-before-run by default; optional auto-run mode
@@ -30,20 +30,24 @@ That's it. The installer walks you through each step and **asks before making ch
 ## Requirements
 
 - Python 3.11+
-- Dolphin (KDE Plasma 6) and/or Thunar
+- Dolphin (KDE Plasma 6), Thunar, and/or Nautilus
+- For Nautilus, the `nautilus-python` package (the extension is plain Python; Nautilus loads it in-process)
 - One AI backend (configure in settings after install)
 
 Optional Arch packages:
 
 ```bash
-sudo pacman -S python ollama   # ollama only if using local models
+sudo pacman -S python ollama          # ollama only if using local models
+sudo pacman -S nautilus-python        # only for the Nautilus/Files menu
 ```
 
 ## Usage
 
-### From Dolphin or Thunar
+### From Dolphin, Thunar, or Nautilus
 
 Right-click a folder or a file → **InDir** → chat window opens.
+
+In Nautilus/Files the entry also appears when you right-click the empty background of a folder (that opens InDir on the current folder). Nautilus offers InDir for a single selected item only, because a chat session is scoped to one folder or file.
 
 Opening a **file** keeps the chat on that file. Ask to include the folder (or the other files) and InDir widens the scope to the parent directory.
 
@@ -104,10 +108,11 @@ indir --doctor    # or: make doctor
 
 | Problem | Fix |
 |---------|-----|
-| "Could not find indir" in Dolphin/Thunar | Re-run `./install` (uses full path in menu) |
+| "Could not find indir" in Dolphin/Thunar/Files | Re-run `./install` (uses full path in menu) |
+| InDir missing in Files (Nautilus) | Install `nautilus-python`, then `nautilus -q`; re-run `./install` if you skipped the Nautilus step |
 | Backend error / connection refused | Open settings (gear) and check provider; for Ollama run `ollama serve` |
 | API key missing from file manager | Open settings (gear) and save the key, or set it in config |
-| Menu not showing | Restart Dolphin or Thunar (`thunar -q`), or run `./install` again |
+| Menu not showing | Restart Dolphin, Thunar (`thunar -q`), or Files (`nautilus -q`), or run `./install` again |
 
 ## Uninstall
 

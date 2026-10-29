@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import re
 import shutil
 import sys
 import urllib.request
@@ -18,6 +20,10 @@ LEGACY_SERVICEMENU_PATH = (
 )
 THUNAR_UCA_PATH = Path.home() / ".config" / "Thunar" / "uca.xml"
 THUNAR_UNIQUE_ID = "indir-thunar-1"
+NAUTILUS_EXT_PATH = (
+    Path.home() / ".local" / "share" / "nautilus-python" / "extensions" / "indir.py"
+)
+NAUTILUS_BINDINGS_PATH = Path("/usr/lib/nautilus/extensions-4/libnautilus-python.so")
 LOCAL_BIN = Path.home() / ".local" / "bin" / "indir"
 
 
@@ -97,7 +103,30 @@ def main() -> int:
     else:
         warn("Thunar not installed — skipped Thunar menu check")
 
-    if not dolphin_ok and not thunar_ok and (dolphin_bin or thunar_bin):
+    nautilus_bin = shutil.which("nautilus")
+    extension_present = NAUTILUS_EXT_PATH.is_file()
+    nautilus_ok = extension_present and nautilus_bin is not None
+    if extension_present:
+        text = NAUTILUS_EXT_PATH.read_text(encoding="utf-8", errors="replace")
+        if nautilus_bin is None:
+            warn(f"Nautilus extension installed but Nautilus is not: {NAUTILUS_EXT_PATH}")
+        else:
+            ok(f"Nautilus menu: {NAUTILUS_EXT_PATH}")
+        if 'CLI_PATH = "__INDIR_CLI__"' in text:
+            warn("Nautilus extension still has placeholders — re-run ./install")
+        baked = re.search(r'^CLI_PATH\s*=\s*"([^"]+)"', text, re.MULTILINE)
+        if baked:
+            baked_cli = Path(baked.group(1))
+            if not (baked_cli.is_file() and os.access(baked_cli, os.X_OK)):
+                warn(f"Nautilus menu points at a missing CLI ({baked_cli}) — re-run ./install")
+        if not NAUTILUS_BINDINGS_PATH.is_file():
+            warn("nautilus-python missing — Nautilus ignores the menu until you run: sudo pacman -S nautilus-python")
+    elif nautilus_bin:
+        warn(f"Nautilus extension missing: {NAUTILUS_EXT_PATH} — re-run ./install to add it")
+    else:
+        warn("Nautilus not installed — skipped Nautilus menu check")
+
+    if not dolphin_ok and not thunar_ok and not nautilus_ok and (dolphin_bin or thunar_bin or nautilus_bin):
         fail("No file-manager menu installed — re-run ./install")
         errors += 1
 
