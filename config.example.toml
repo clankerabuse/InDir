@@ -39,7 +39,7 @@ api_key_env = "OPENCODE_API_KEY"
 # Zen pay-per-use: https://opencode.ai/zen/v1
 # Go subscription:  https://opencode.ai/zen/go/v1
 base_url = "https://opencode.ai/zen/v1"
-model = "kimi-k2.6"
+model = "kimi-k2.7-code"
 
 [execution]
 mode = "confirm"   # confirm | auto
