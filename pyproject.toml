@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "indir"
 version = "0.1.0"
-description = "InDir — Dolphin/Thunar right-click AI assistant for directory-scoped tasks"
+description = "InDir — Dolphin/Thunar/Nautilus right-click AI assistant for directory-scoped tasks"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -26,6 +26,7 @@ packages = ["src/indir"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "servicemenu" = "servicemenu"
+"nautilus" = "nautilus"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

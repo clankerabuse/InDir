@@ -18,7 +18,9 @@ for size in 16 24 32 48 64 128 256; do
     png="${HOME}/.local/share/icons/hicolor/${size}x${size}/apps/indir.png"
     [[ -f "$png" ]] && rm -f "$png"
 done
-python3 "$SCRIPT_DIR/thunar_uca.py" remove
+python3 "$SCRIPT_DIR/thunar_uca.py" remove || true
+python3 "$SCRIPT_DIR/nautilus_extension.py" remove || true
+echo "  (restart Nautilus with 'nautilus -q' so a loaded InDir menu disappears)"
 [[ -L "$LOCAL_BIN" ]] && rm -f "$LOCAL_BIN" && echo "  Removed CLI symlink"
 
 echo ""
