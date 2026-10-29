@@ -55,6 +55,9 @@ class AgentSession:
     pending_commands: list[PendingCommand] = field(default_factory=list)
     scope_widened: bool = False
     _confirm_callback: Callable[[str], bool] | None = field(default=None, repr=False)
+    _progress_callback: Callable[[str, str | None], None] | None = field(
+        default=None, repr=False
+    )
     _cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _active_proc: subprocess.Popen[str] | None = field(default=None, repr=False)
 
@@ -69,6 +72,23 @@ class AgentSession:
 
     def set_confirm_callback(self, callback: Callable[[str], bool]) -> None:
         self._confirm_callback = callback
+
+    def set_progress_callback(
+        self, callback: Callable[[str, str | None], None] | None
+    ) -> None:
+        """Called with ("model", None) before a model call and
+        ("command", <command>) before a shell command, so a UI can show what the
+        agent is waiting on. Progress reporting must never break the run."""
+        self._progress_callback = callback
+
+    def _progress(self, phase: str, detail: str | None = None) -> None:
+        callback = self._progress_callback
+        if callback is None:
+            return
+        try:
+            callback(phase, detail)
+        except Exception:
+            pass
 
     def clear_cancel(self) -> None:
         self._cancel_event.clear()
@@ -106,6 +126,8 @@ class AgentSession:
         return AgentEvent(type=EventType.ASSISTANT_TEXT, content="Stopped.")
 
     def _run_shell(self, command: str) -> CommandResult:
+        self._progress("command", command)
+
         def on_start(proc: subprocess.Popen[str]) -> None:
             self._active_proc = proc
 
@@ -325,6 +347,7 @@ class AgentSession:
                 events.append(self._cancelled_event())
                 return events
 
+            self._progress("model")
             try:
                 response = self.backend.chat(self._messages_for_api(), tools=self._tool_definitions())
             except Exception as exc:
