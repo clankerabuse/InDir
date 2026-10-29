@@ -25,7 +25,7 @@ That's it. The installer walks you through each step and **asks before making ch
 - **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
 - **Safe command execution** — confirm-before-run by default; optional auto-run mode
 - **Non-blocking UI** — long commands like ffmpeg run in the background
-- **Terminal UI** — optional Textual TUI via `--tui` or `ui.mode = "tui"` in config
+- **Terminal use** — `indir <request>` runs one request in the current directory and prints the result, with a live one-line indicator while the model or a command works; optional Textual TUI via `--tui` or `ui.mode = "tui"` in config
 
 ## Requirements
 
@@ -61,12 +61,52 @@ Example prompts:
 
 ### From terminal
 
+Ask for something in the current directory — no window, straight to the prompt:
+
 ```bash
-indir ~/Downloads
-indir ~/Downloads/clip.webm
-indir --tui ~/Downloads
-indir --doctor          # check installation
+cd ~/Downloads
+indir convert the mp4s to webm
+indir rename every .jpeg to .jpg
+indir --yes list every video file      # approve commands up front
 ```
+
+InDir runs the same agent as the chat window: it sees the directory, proposes a
+command, and asks before running it:
+
+```
+I'll run: ffmpeg -y -i "clip.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "clip.webm"
+
+Proposed command:
+  ffmpeg -y -i "clip.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "clip.webm"
+Run it? [y]es / [N]o / [a]lways:
+```
+
+While the model or a command is working, a single line shows what it is
+waiting on — `⠹ thinking…`, then `⠼ running ffmpeg … 12s` once a command starts
+(it appears after two seconds, so quick turns stay quiet). It is drawn on the
+terminal only and erased before any real output, so piped runs and copied text
+contain no escape codes. `INDIR_NO_SPINNER=1` turns it off.
+
+`y` runs it, `n` sends the refusal back to the model, `a` runs it and stops
+asking for the rest of that run. With no terminal on stdin (a pipe, cron, a
+script) nothing is executed unless you pass `--yes`; the blocklist still
+applies either way. Exit status is 0 when everything succeeded, 1 when a command
+failed or was refused.
+
+Other folders, and the interactive windows:
+
+```bash
+indir --prompt 'what is in here?' ~/Downloads   # request against another folder
+indir .                                        # open the window here
+indir ~/Downloads                              # window for a folder
+indir ~/Downloads/clip.webm                    # window focused on one file
+indir --tui "list videos"                      # terminal UI, request pre-filled
+indir --doctor                                 # check installation
+```
+
+A first argument that names an existing file or folder (or a `file://` URI) is
+always treated as a target to open; everything else is read as a request for the
+current directory. Use `--prompt`/`-p` when a request could look like a path.
 
 ## Configuration
 

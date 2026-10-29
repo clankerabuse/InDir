@@ -44,11 +44,13 @@ class DirectoryAITApp(App):
         directory: Path,
         config: AppConfig,
         focus_file: Path | None = None,
+        initial_request: str | None = None,
     ) -> None:
         super().__init__()
         self.directory = directory
         self.focus_file = focus_file
         self.config = config
+        self.initial_request = initial_request
         self.backend = None
         self.session: AgentSession | None = None
         self._pending_tool_call_id: str | None = None
@@ -60,6 +62,15 @@ class DirectoryAITApp(App):
             )
         except Exception as exc:
             self._backend_error = str(exc)
+
+    def on_mount(self) -> None:
+        # `indir --tui "<request>"` opens the window with the turn already sent.
+        request = (self.initial_request or "").strip()
+        if not request or self.session is None:
+            return
+        self.initial_request = None
+        self._add_message(request, "user-msg")
+        self.run_worker(self._process_message(request), exclusive=True)
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -196,8 +207,13 @@ class DirectoryAITApp(App):
 
 
 def run_tui(
-    directory: Path, config: AppConfig, focus_file: Path | None = None
+    directory: Path,
+    config: AppConfig,
+    focus_file: Path | None = None,
+    initial_request: str | None = None,
 ) -> int:
-    app = DirectoryAITApp(directory, config, focus_file=focus_file)
+    app = DirectoryAITApp(
+        directory, config, focus_file=focus_file, initial_request=initial_request
+    )
     app.run()
     return 0
