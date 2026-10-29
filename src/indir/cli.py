@@ -24,17 +24,20 @@ def _run_doctor() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    if argv and argv[0] == "doctor":
-        return _run_doctor()
-    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+    # Always work from one argument list: mixing argv with sys.argv let a host
+    # process steer main([...]) into the doctor path.
+    args_list = list(sys.argv[1:] if argv is None else argv)
+    if args_list == ["doctor"]:
         return _run_doctor()
 
     parser = argparse.ArgumentParser(
-        description="InDir — Dolphin/Thunar right-click AI assistant"
+        prog="indir",
+        usage="indir PATH [--tui] [--config PATH]\n       indir --doctor",
+        description="InDir — Dolphin/Thunar/Nautilus right-click AI assistant",
     )
     parser.add_argument(
         "paths",
-        nargs="+",
+        nargs="*",
         help="File or directory path, or a file:// URI from the file manager",
     )
     parser.add_argument(
@@ -53,9 +56,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Check installation and configuration",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args(args_list)
 
     if args.doctor:
+        if args.paths:
+            parser.error("--doctor does not take a path")
         return _run_doctor()
 
     if not args.paths:

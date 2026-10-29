@@ -139,7 +139,7 @@ def test_create_backend_opencode(tmp_path: Path) -> None:
 
     backend = create_backend(config, tmp_path)
     assert isinstance(backend, OpenAICompatBackend)
-    assert backend.config.model == "kimi-k2.6"
+    assert backend.config.model == "kimi-k2.7-code"
 
 
 def test_create_backend_opencode_requires_key(tmp_path: Path, monkeypatch) -> None:

@@ -6,6 +6,8 @@ Used by the settings UI so users never have to hardcode model names —
 plug in a base URL / API key and the dropdown populates itself.
 """
 
+import json
+import re
 import uuid
 from urllib.parse import urlparse
 
@@ -21,8 +23,9 @@ OPENCODE_GO_BASE_URL = "https://opencode.ai/zen/go/v1"
 # (HTTP 400). One id per conversation is what the OpenCode client sends.
 OPENCODE_SESSION_HEADER = "x-opencode-session"
 
-# Probe model for gateway detection: present on both the Zen and Go catalogs.
-_OPENCODE_PROBE_MODEL = "kimi-k2.6"
+# Probe model for gateway detection: must exist on both the Zen and the Go
+# catalog, otherwise detection reports a gateway error instead of a gateway.
+_OPENCODE_PROBE_MODEL = "kimi-k2.7-code"
 
 # The Go gateway lists every model it carries, but these are served only on the
 # Responses or Messages API and reject /chat/completions with
@@ -137,13 +140,102 @@ def detect_opencode_base_url(api_key: str) -> str:
             "https://opencode.ai/auth (Go subscription keys start with 'oc_sk_')."
         )
     # A Go key whose probe model was retired still gets past auth and reaches the
-    # upstream, so a model-level 400 also proves this is the Go gateway.
-    if response.status_code == 400 and "model is unavailable" in response.text.lower():
+    # upstream, so a model-level rejection also proves this is the Go gateway —
+    # unless Zen rejects the key too, which means the key is dead after all.
+    if _is_model_level_rejection(response):
+        if not _opencode_key_reaches_zen(api_key):
+            raise ValueError(
+                "OpenCode rejected this API key on both the Go and Zen gateways, so it "
+                "looks invalid or expired. Copy a current key from "
+                "https://opencode.ai/auth (Go subscription keys start with 'oc_sk_')."
+            )
         return OPENCODE_GO_BASE_URL
     raise RuntimeError(
         f"OpenCode gateway detection failed (HTTP {response.status_code}): "
-        f"{response.text[:200]}"
+        f"{_redact_secrets(response.text[:200])}"
     )
+
+
+# Error type/code strings the gateways use for "that model is gone", normalised
+# to lowercase with separators removed: model_not_found == ModelNotFound.
+_MODEL_REJECTION_CODES = frozenset(
+    {
+        "modeldeprecated",
+        "modelretired",
+        "modelnotfound",
+        "modelunavailable",
+        "modelnotsupported",
+        "invalidmodel",
+        "unknownmodel",
+        "unsupportedmodel",
+    }
+)
+
+# Prose fallbacks, matched against the error *message* only.
+_MODEL_REJECTION_MARKERS = (
+    "model is unavailable",
+    "model has been deprecated",
+    "model is deprecated",
+    "model was retired",
+    "no longer available",
+    "does not exist",
+    "unknown model",
+    "invalid model",
+    "unsupported model",
+)
+
+_SECRET_PATTERN = re.compile(r"(oc_sk_|sk-ant-|sk-|xai-|gh[pousr]_|Bearer\s+)[A-Za-z0-9_\-]{6,}")
+
+
+def _redact_secrets(text: str) -> str:
+    """Strip anything that looks like a credential from gateway error text.
+
+    Gateways sometimes echo the submitted key back in the rejection body, and the
+    message ends up in the UI and the terminal.
+    """
+    return _SECRET_PATTERN.sub(r"\1[redacted]", text)
+
+
+def _error_fields(response: httpx.Response) -> tuple[str, str]:
+    """(type-or-code, message) from a gateway error body, lowercased.
+
+    Only the structured error object is consulted: a 400 that merely echoes the
+    submitted request (which contains "model": "...") must not look like a
+    model-level rejection.
+    """
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError):
+        return "", response.text.lower()
+    if not isinstance(payload, dict):
+        return "", ""
+    error = payload.get("error")
+    if isinstance(error, dict):
+        code = error.get("type") or error.get("code") or ""
+        message = error.get("message") or ""
+        return str(code).lower(), str(message).lower()
+    # Some endpoints report {"type": ..., "message": ...} without the wrapper.
+    code = payload.get("type") or payload.get("code") or ""
+    return str(code).lower(), str(payload.get("message") or "").lower()
+
+
+def _is_model_level_rejection(response: httpx.Response) -> bool:
+    """True when the gateway rejected the probe *model*, not the credential.
+
+    A retired probe model answers 400 ("Model is unavailable") or 410
+    ({"type": "ModelDeprecated", ...}). Both mean authentication succeeded first,
+    so the request must not be reported as a bad key or a broken gateway. A 410
+    counts even with an empty body: Gone is only served once auth has passed.
+    """
+    if response.status_code == 410:
+        return True
+    if response.status_code != 400:
+        return False
+    code, message = _error_fields(response)
+    normalised_code = re.sub(r"[\s_\-]", "", code)
+    if normalised_code in _MODEL_REJECTION_CODES:
+        return True
+    return any(marker in message for marker in _MODEL_REJECTION_MARKERS)
 
 
 def _opencode_key_reaches_zen(api_key: str) -> bool:

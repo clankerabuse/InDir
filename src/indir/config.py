@@ -76,7 +76,7 @@ class OpenCodeConfig:
     # Zen pay-per-use: https://opencode.ai/zen/v1
     # Go subscription:  https://opencode.ai/zen/go/v1
     base_url: str = "https://opencode.ai/zen/v1"
-    model: str = "kimi-k2.6"
+    model: str = "kimi-k2.7-code"
 
     def resolved_api_key(self) -> str | None:
         # OpenCode's own tooling stores the Go subscription key as
