@@ -187,7 +187,8 @@ def test_prompt_reads_a_choice_from_stdin(httpx_mock, tmp_path: Path) -> None:
 
     assert code == 0
     assert (tmp_path / "made.txt").exists()
-    assert "Run it? [y]es / [N]o / [a]lways:" in out.getvalue()
+    # A contained write offers "always", which is scoped to this kind.
+    assert "Run it? [y]es / [N]o / [a]lways for this kind:" in out.getvalue()
 
 
 class SlowBackend:
@@ -232,10 +233,12 @@ def test_a_tty_run_shows_the_indicator_and_clears_it(monkeypatch, tmp_path: Path
     )
     out, err = FakeTTY(), FakeTTY()
 
+    # An informational request: no filesystem change is expected, so the fast
+    # path may report "Done." without a verification round.
     code = run_request(
         tmp_path,
         AppConfig(),
-        "clean up",
+        "say hi",
         out=out,
         err=err,
         stdin=FakeTTY(),
@@ -247,5 +250,6 @@ def test_a_tty_run_shows_the_indicator_and_clears_it(monkeypatch, tmp_path: Path
     spinner_text = err.getvalue()
     assert "thinking" in spinner_text
     assert "running sleep 0.2" in spinner_text  # label follows the real phase
-    assert spinner_text.endswith("\r\x1b[2K")  # erased, nothing left behind
+    # The spinner is erased before the run's output starts.
+    assert "\r\x1b[2KInDir:" in spinner_text
     assert "Done." in out.getvalue()  # a clean command ends the turn early

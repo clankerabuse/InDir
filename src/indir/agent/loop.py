@@ -13,12 +13,19 @@ from indir.agent.tools import (
     list_directory,
     run_command,
 )
+from indir.agent.policy import ApprovalPolicy, Risk
+from indir.agent.verify import TurnVerifier, closing_is_a_claim, correction_prompt
 from indir.backends.base import TOOL_DEFINITIONS, WIDEN_SCOPE_TOOL, ChatBackend, ChatMessage
 from indir.config import AppConfig
 from indir.context import build_directory_summary, build_system_prompt, resolve_run_command
 
 # Keep recent turns only so long chats don't keep growing prefill cost.
 _MAX_HISTORY_MESSAGES = 24
+
+# How many times a failed check is handed back to the model before the turn is
+# reported as not done. Bounded: a model that cannot act will not start acting
+# on the fifth request either, and every retry costs a round-trip.
+_MAX_VERIFY_ROUNDS = 2
 
 
 class EventType(str, Enum):
@@ -29,6 +36,7 @@ class EventType(str, Enum):
     COMMAND_RESULT = "command_result"
     ERROR = "error"
     SCOPE_WIDENED = "scope_widened"
+    VERIFICATION = "verification"
 
 
 @dataclass
@@ -37,12 +45,20 @@ class AgentEvent:
     content: str
     command: str | None = None
     tool_call_id: str | None = None
+    ok: bool | None = None
+    # Why a command ran without being asked about (read-only, or a kind the
+    # user already said "always" to).
+    note: str | None = None
 
 
 @dataclass
 class PendingCommand:
     tool_call_id: str
     command: str
+    kind: str = ""
+    grantable: bool = False
+    reason: str = ""
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass
@@ -60,8 +76,14 @@ class AgentSession:
     )
     _cancel_event: threading.Event = field(default_factory=threading.Event, repr=False)
     _active_proc: subprocess.Popen[str] | None = field(default=None, repr=False)
+    _verifier: TurnVerifier | None = field(default=None, repr=False)
+    _policy: ApprovalPolicy | None = field(default=None, repr=False)
+    _turn_replies: list[str] = field(default_factory=list, repr=False)
+    _verify_rounds: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
+        self._verifier = TurnVerifier(self.directory)
+        self._policy = ApprovalPolicy(list(self.config.execution.blocklist))
         if not self.messages:
             self.messages.append(
                 ChatMessage(
@@ -134,7 +156,7 @@ class AgentSession:
         def on_finish() -> None:
             self._active_proc = None
 
-        return run_command(
+        result = run_command(
             self.directory,
             command,
             self.config.execution,
@@ -142,6 +164,9 @@ class AgentSession:
             on_start=on_start,
             on_finish=on_finish,
         )
+        if self._verifier is not None:
+            self._verifier.record_command(command, result.returncode)
+        return result
 
     def _messages_for_api(self) -> list[ChatMessage]:
         if len(self.messages) <= _MAX_HISTORY_MESSAGES + 1:
@@ -155,8 +180,115 @@ class AgentSession:
         self.messages.append(done)
         return [AgentEvent(type=EventType.ASSISTANT_TEXT, content="Done.")]
 
+    def _verification_enabled(self) -> bool:
+        return bool(getattr(self.config.execution, "verify", True))
+
+    def _close_turn(
+        self,
+        events: list[AgentEvent],
+        *,
+        synthesize: bool,
+        closing: str | None = None,
+    ) -> bool:
+        """Decide whether this turn is finished.
+
+        Returns True when the turn is over and False when the work was not
+        verified and the model has been given the discrepancy to fix. Nothing
+        is reported as done on the strength of a reply alone, and a closing
+        reply is only shown once the filesystem agrees with it.
+        """
+        if not self._verification_enabled() or self._verifier is None:
+            if closing:
+                events.append(AgentEvent(type=EventType.ASSISTANT_TEXT, content=closing))
+            if synthesize:
+                events.extend(self._finish_successful_command())
+            return True
+
+        verdict = self._verifier.verdict(self._turn_replies)
+        check = AgentEvent(
+            type=EventType.VERIFICATION, content=verdict.summary, ok=verdict.ok
+        )
+        if verdict.ok:
+            if closing:
+                events.append(
+                    AgentEvent(type=EventType.ASSISTANT_TEXT, content=closing)
+                )
+            if verdict.checked:
+                events.append(check)
+            if synthesize:
+                events.extend(self._finish_successful_command())
+            return True
+
+        if self._verify_rounds < _MAX_VERIFY_ROUNDS and not self.is_cancelled():
+            self._verify_rounds += 1
+            # The unverified claim stays out of the transcript: it is not
+            # information the user should read. A system message would replace
+            # the system prompt on the Anthropic backend, so the correction
+            # goes in as a clearly-marked user turn.
+            self.messages.append(
+                ChatMessage(role="user", content=correction_prompt(verdict))
+            )
+            return False
+
+        # Out of retries: report the failure instead of letting the claim stand.
+        # An explanation still reaches the user; a success claim never does.
+        if closing and not closing_is_a_claim(closing, verdict.claims):
+            events.append(AgentEvent(type=EventType.ASSISTANT_TEXT, content=closing))
+        if verdict.checked:
+            events.append(check)
+        # The verdict event is what reports this: the CLI turns it into a
+        # non-zero exit, the window into an error bubble. Adding an assistant
+        # message as well would print the same failure twice.
+        self.messages.append(
+            ChatMessage(role="assistant", content=verdict.failure_message())
+        )
+        return True
+
+    def _abandon_turn(self) -> list[AgentEvent]:
+        """Ran out of iterations without ever closing the turn."""
+        if self._verifier is None or not self._verification_enabled():
+            return []
+        verdict = self._verifier.verdict(self._turn_replies)
+        if verdict.ok:
+            return []
+        self.messages.append(
+            ChatMessage(role="assistant", content=verdict.failure_message())
+        )
+        return [
+            AgentEvent(
+                type=EventType.VERIFICATION, content=verdict.summary, ok=False
+            )
+        ]
+
+    def _runs_unprompted(self, decision) -> bool:
+        """True when a decision needs no approval this time."""
+        if decision is None:
+            return False
+        if decision.runs_without_asking:
+            return True
+        return bool(
+            self._policy is not None
+            and decision.can_remember
+            and self._policy.granted(decision.kind)
+        )
+
+    def _auto_note(self, decision) -> str | None:
+        if decision is None:
+            return None
+        if decision.risk is Risk.BLOCKED:
+            return f"refused — {decision.note()}"
+        if decision.runs_without_asking:
+            # A read-only command cannot change anything: asking about it just
+            # trains the user to approve without reading.
+            return f"ran without asking — {decision.note()}"
+        if self._runs_unprompted(decision):
+            return f"ran without asking — you allowed {decision.kind} in this chat"
+        return None
+
     def _execute_tool(self, name: str, arguments: dict, tool_call_id: str) -> AgentEvent | None:
         if name == "list_directory":
+            if self._verifier is not None:
+                self._verifier.record_inspection()
             if self.focus_file is not None and not self.scope_widened:
                 result = (
                     f"This chat is focused on {self.focus_file.name} only. "
@@ -181,7 +313,14 @@ class AgentSession:
             command = resolve_run_command(
                 self.directory, arguments.get("command", ""), focus
             )
-            if self.config.execution.mode == "auto":
+            mode = self.config.execution.mode
+            decision = (
+                self._policy.decide(command, self.directory)
+                if mode == "smart" and self._policy is not None
+                else None
+            )
+            note = self._auto_note(decision)
+            if mode == "auto" or self._runs_unprompted(decision):
                 cmd_result = self._run_shell(command)
                 formatted = format_command_result(cmd_result)
                 self.messages.append(
@@ -197,16 +336,25 @@ class AgentSession:
                     content=formatted,
                     command=command,
                     tool_call_id=tool_call_id,
+                    note=note,
                 )
 
             self.pending_commands.append(
-                PendingCommand(tool_call_id=tool_call_id, command=command)
+                PendingCommand(
+                    tool_call_id=tool_call_id,
+                    command=command,
+                    kind=decision.kind if decision is not None else "",
+                    grantable=decision.can_remember if decision is not None else False,
+                    reason=decision.reason if decision is not None else "",
+                    warnings=decision.warnings if decision is not None else (),
+                )
             )
             return AgentEvent(
                 type=EventType.COMMAND_PENDING,
                 content=f"Proposed command: {command}",
                 command=command,
                 tool_call_id=tool_call_id,
+                note=decision.reason if decision is not None else None,
             )
 
         if name == "widen_scope":
@@ -259,7 +407,9 @@ class AgentSession:
         label = self.directory.name or str(self.directory)
         return AgentEvent(type=EventType.SCOPE_WIDENED, content=label)
 
-    def approve_command(self, tool_call_id: str, command: str | None = None) -> list[AgentEvent]:
+    def approve_command(
+        self, tool_call_id: str, command: str | None = None, always: bool = False
+    ) -> list[AgentEvent]:
         pending = next(
             (p for p in self.pending_commands if p.tool_call_id == tool_call_id), None
         )
@@ -267,6 +417,8 @@ class AgentSession:
             return [AgentEvent(type=EventType.ERROR, content="No pending command found")]
 
         self.pending_commands.remove(pending)
+        if always and pending.grantable:
+            self.remember(pending.kind)
         cmd = command if command is not None else pending.command
         cmd_result = self._run_shell(cmd)
         formatted = format_command_result(cmd_result)
@@ -289,12 +441,20 @@ class AgentSession:
         if self.is_cancelled():
             events.append(self._cancelled_event())
             return events
-        # Successful commands skip a follow-up model round-trip.
+        # Successful commands skip a follow-up model round-trip, but only once
+        # the filesystem shows the command did what it claimed.
         if cmd_result.returncode == 0 and not cmd_result.blocked:
-            events.extend(self._finish_successful_command())
+            if self._close_turn(events, synthesize=True):
+                return events
+            events.extend(self._continue_after_tool())
             return events
         events.extend(self._continue_after_tool())
         return events
+
+    def remember(self, kind: str) -> None:
+        """Allow this kind of write for the rest of the chat (not just once)."""
+        if self._policy is not None:
+            self._policy.grant(kind)
 
     def reject_command(self, tool_call_id: str) -> list[AgentEvent]:
         pending = next(
@@ -337,6 +497,11 @@ class AgentSession:
 
     def send_user_message(self, text: str) -> list[AgentEvent]:
         self.messages.append(ChatMessage(role="user", content=text))
+        # Baseline the directory now: the verdict compares against this.
+        if self._verifier is not None:
+            self._verifier.begin(text)
+        self._turn_replies = []
+        self._verify_rounds = 0
         return self._run_loop()
 
     def _run_loop(self, max_iterations: int = 10) -> list[AgentEvent]:
@@ -375,12 +540,16 @@ class AgentSession:
                 )
 
             if assistant_msg.content:
-                events.append(
-                    AgentEvent(
-                        type=EventType.ASSISTANT_TEXT,
-                        content=assistant_msg.content,
+                self._turn_replies.append(assistant_msg.content)
+                # A closing reply is held back until verification passes; only
+                # narration that accompanies a tool call is shown immediately.
+                if assistant_msg.tool_calls:
+                    events.append(
+                        AgentEvent(
+                            type=EventType.ASSISTANT_TEXT,
+                            content=assistant_msg.content,
+                        )
                     )
-                )
             elif assistant_msg.tool_calls:
                 summary = self._summarize_tool_calls(assistant_msg.tool_calls)
                 if summary:
@@ -392,6 +561,10 @@ class AgentSession:
                     )
 
             if not assistant_msg.tool_calls:
+                if not self._close_turn(
+                    events, synthesize=False, closing=assistant_msg.content
+                ):
+                    continue
                 break
 
             saw_list = False
@@ -420,7 +593,12 @@ class AgentSession:
                 and not command_failed
                 and all(tc.name == "run_command" for tc in assistant_msg.tool_calls)
             ):
-                events.extend(self._finish_successful_command())
-                break
+                if self._close_turn(events, synthesize=True):
+                    break
+                continue
+
+        else:
+            # Iterations ran out with a retry still outstanding.
+            events.extend(self._abandon_turn())
 
         return events

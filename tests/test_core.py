@@ -110,7 +110,8 @@ def test_resolve_run_command_uses_focused_file_among_siblings(tmp_path: Path) ->
 def test_load_config_defaults() -> None:
     config = load_config(Path("/nonexistent/config.toml"))
     assert config.backend.provider == "ollama"
-    assert config.execution.mode == "confirm"
+    # Smart by default: read-only commands never prompt.
+    assert config.execution.mode == "smart"
 
 
 def test_opencode_config_round_trip(tmp_path: Path) -> None:

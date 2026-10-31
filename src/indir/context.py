@@ -244,6 +244,11 @@ Working directory (cwd for commands): {safe_dir}
 5. Prefer one command: command -v TOOL && TOOL ...
 6. Keep replies short.
 
+## Completion
+- Every turn is checked against the filesystem afterwards. A command exiting 0 is not proof: if nothing was created, changed or deleted, the work is not done and you will be asked to fix it.
+- Only name an output file once it exists. Never say a file was created, converted, moved or deleted unless the command that did it actually ran and succeeded.
+- If the work cannot be done (tool missing, no matching files, permission denied), say exactly that and stop. A clear failure is better than a claim.
+
 ## Recipes
 webm: command -v ffmpeg && ffmpeg -y -i "SOURCE.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "SOURCE.webm"
 mp4: command -v ffmpeg && ffmpeg -y -i "SOURCE.webm" -c:v libx264 -crf 23 -c:a aac "SOURCE.mp4"
@@ -285,6 +290,11 @@ File summary:
 4. Keep output basenames the same; only change the extension (foo.mp4 → foo.webm).
 5. Prefer one command: command -v TOOL && TOOL ...
 6. Keep replies short.
+
+## Completion
+- Every turn is checked against the filesystem afterwards. A command exiting 0 is not proof: if nothing was created, changed or deleted, the work is not done and you will be asked to fix it.
+- Only name an output file once it exists. Never say a file was created, converted, moved or deleted unless the command that did it actually ran and succeeded.
+- If the work cannot be done (tool missing, no matching files, permission denied), say exactly that and stop. A clear failure is better than a claim.
 
 ## Recipes
 webm: command -v ffmpeg && ffmpeg -y -i "SOURCE.mp4" -c:v libvpx-vp9 -crf 32 -b:v 0 -c:a libopus "SOURCE.webm"
