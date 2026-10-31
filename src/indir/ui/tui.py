@@ -138,9 +138,16 @@ class DirectoryAITApp(App):
         elif event.type == EventType.COMMAND_PENDING:
             self._show_command_panel(event.tool_call_id or "", event.command or "")
         elif event.type == EventType.COMMAND_RESULT:
+            if event.note:
+                self._add_message(event.note, "system-msg")
             self._add_message(event.content, "tool-msg")
         elif event.type == EventType.ERROR:
             self._add_message(event.content, "error-msg")
+        elif event.type == EventType.VERIFICATION:
+            self._add_message(
+                event.content,
+                "error-msg" if event.ok is False else "system-msg",
+            )
         elif event.type == EventType.SCOPE_WIDENED:
             self.focus_file = None
             self._add_message(
@@ -160,7 +167,20 @@ class DirectoryAITApp(App):
         panel.mount(Static(f"Proposed command:\n{command}"))
         run_btn = Button("Run", id="run-cmd", variant="primary")
         cancel_btn = Button("Cancel", id="cancel-cmd")
-        panel.mount(run_btn, cancel_btn)
+        pending = next(
+            (
+                p
+                for p in (self.session.pending_commands if self.session else [])
+                if p.tool_call_id == tool_call_id
+            ),
+            None,
+        )
+        if pending is not None and pending.grantable:
+            # Only a routine write can be remembered; a destructive command is
+            # approved one run at a time.
+            panel.mount(run_btn, Button("Always", id="always-cmd"), cancel_btn)
+        else:
+            panel.mount(run_btn, cancel_btn)
         scroll.mount(panel)
         scroll.scroll_end(animate=False)
         self._pending_command = command
@@ -171,13 +191,14 @@ class DirectoryAITApp(App):
         tool_call_id = self._pending_tool_call_id
         command = getattr(self, "_pending_command", "")
 
-        if event.button.id == "run-cmd":
+        if event.button.id in {"run-cmd", "always-cmd"}:
+            always = event.button.id == "always-cmd"
             self._pending_tool_call_id = None
             panel = self.query_one("#command-panel", Vertical)
             panel.remove()
             self._add_message(f"Running: {command}", "system-msg")
             self.run_worker(
-                self._approve_command(tool_call_id, command),
+                self._approve_command(tool_call_id, command, always=always),
                 exclusive=True,
             )
         elif event.button.id == "cancel-cmd":
@@ -189,9 +210,11 @@ class DirectoryAITApp(App):
                 exclusive=True,
             )
 
-    async def _approve_command(self, tool_call_id: str, command: str) -> None:
+    async def _approve_command(
+        self, tool_call_id: str, command: str, *, always: bool = False
+    ) -> None:
         try:
-            events = self.session.approve_command(tool_call_id, command)
+            events = self.session.approve_command(tool_call_id, command, always=always)
             for ev in events:
                 self._handle_event(ev)
         except Exception as exc:

@@ -95,7 +95,7 @@ def build_config(
         [
             "",
             "[execution]",
-            'mode = "confirm"',
+            'mode = "smart"',
             'blocklist = ["rm -rf /", "mkfs", ":(){ :|:& };:"]',
             "max_output_bytes = 65536",
             "",

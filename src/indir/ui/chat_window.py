@@ -306,6 +306,7 @@ class SessionWorker(QThread):
                 events = self.session.approve_command(
                     self.kwargs["tool_call_id"],
                     self.kwargs.get("command"),
+                    always=bool(self.kwargs.get("always")),
                 )
             elif self.task == "reject":
                 events = self.session.reject_command(self.kwargs["tool_call_id"])
@@ -1559,6 +1560,12 @@ class ChatWindow(QMainWindow):
         self.deny_btn = QPushButton("Deny")
         self.deny_btn.setObjectName("dangerButton")
         self.deny_btn.clicked.connect(self._on_deny_command)
+        self.always_btn = QPushButton("Always")
+        self.always_btn.setObjectName("secondaryButton")
+        self.always_btn.setToolTip(
+            "Allow this kind of write for the rest of the chat and stop asking"
+        )
+        self.always_btn.clicked.connect(self._on_always_command)
         self.type_btn = QPushButton("Type")
         self.type_btn.setObjectName("secondaryButton")
         self.type_btn.clicked.connect(self._on_type_mode)
@@ -1568,6 +1575,7 @@ class ChatWindow(QMainWindow):
         approval_layout.setContentsMargins(0, 0, 0, 0)
         approval_layout.setSpacing(6)
         approval_layout.addWidget(self.approve_btn, stretch=1)
+        approval_layout.addWidget(self.always_btn, stretch=1)
         approval_layout.addWidget(self.deny_btn, stretch=1)
         approval_layout.addWidget(self.type_btn, stretch=1)
         self.approval_actions.hide()
@@ -1618,6 +1626,13 @@ class ChatWindow(QMainWindow):
         self._pending_tool_call_id = tool_call_id
         self._command_preview = CommandPreviewWidget(command)
         self.approval_layout.addWidget(self._command_preview)
+        # "Always" is only offered for a write the policy is willing to
+        # remember; a destructive command has to be approved every time.
+        pending = next(
+            (p for p in (self.session.pending_commands if self.session else []) if p.tool_call_id == tool_call_id),
+            None,
+        )
+        self.always_btn.setVisible(bool(pending and pending.grantable))
         self.approval_host.show()
         self._show_composer_approval()
 
@@ -1650,6 +1665,7 @@ class ChatWindow(QMainWindow):
             self.send_btn.setEnabled(self.session is not None)
         self.input_box.setEnabled(not busy and self.session is not None)
         self.approve_btn.setEnabled(not busy)
+        self.always_btn.setEnabled(not busy)
         self.deny_btn.setEnabled(not busy)
         self.type_btn.setEnabled(not busy)
         if self._command_preview is not None:
@@ -1734,15 +1750,24 @@ class ChatWindow(QMainWindow):
         elif event.type == EventType.TOOL_RESULT:
             self._append_background("Tool result", event.content)
         elif event.type == EventType.COMMAND_RESULT:
+            if event.note:
+                self._append_background("Approval", event.note)
             self._append_background("Command output", event.content)
         elif event.type == EventType.COMMAND_PENDING:
             self._show_command_preview(event.tool_call_id or "", event.command or "")
             self.message_panel.append_assistant(event.content)
+            if event.note:
+                self._append_background("Approval", event.note)
         elif event.type == EventType.ERROR:
             self.message_panel.append_assistant(event.content, error=True)
         elif event.type == EventType.SCOPE_WIDENED:
             self.widen_scope_chrome()
             self._append_background("Scope", f"Included the whole folder ({event.content}).")
+        elif event.type == EventType.VERIFICATION:
+            if event.ok is False:
+                self.message_panel.append_assistant(event.content, error=True)
+            else:
+                self._append_background("Check", event.content)
 
     def _on_approve_command(self) -> None:
         if not self._pending_tool_call_id or self._worker_running():
@@ -1757,6 +1782,23 @@ class ChatWindow(QMainWindow):
             "Running command…",
             tool_call_id=tool_call_id,
             command=command,
+        )
+
+    def _on_always_command(self) -> None:
+        """Approve this command and stop asking about its kind in this chat."""
+        if not self._pending_tool_call_id or self._worker_running():
+            return
+        if not self._require_backend():
+            return
+        command = self._command_preview.command_text() if self._command_preview else ""
+        tool_call_id = self._pending_tool_call_id
+        self._clear_approval()
+        self._start_worker(
+            "approve",
+            "Running command…",
+            tool_call_id=tool_call_id,
+            command=command,
+            always=True,
         )
 
     def _on_deny_command(self) -> None:

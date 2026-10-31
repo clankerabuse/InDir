@@ -23,7 +23,8 @@ That's it. The installer walks you through each step and **asks before making ch
 - **File manager integration** — "InDir" appears in the right-click menu for files and folders in Dolphin (Plasma 6), Thunar, and Nautilus/Files (GNOME)
 - **Persistent chat window** — multi-turn conversation scoped to the selected folder, or to one file when you open a file
 - **Configurable backends** — Ollama (local), OpenAI-compatible APIs, Grok (xAI), Anthropic, OpenCode (Zen/Go), optional Cursor SDK — set via the gear icon
-- **Safe command execution** — confirm-before-run by default; optional auto-run mode
+- **Safe command execution** — `execution.mode = "smart"` (default) asks only about commands that change files: read-only inspection like `ls` or `ffprobe` runs without a prompt, a routine write like a conversion asks once and "always" remembers that kind for the chat, and `rm`, `mv` onto an existing file, downloads, shells and anything outside the folder ask every time. `confirm` asks about everything, `auto` asks about nothing
+- **Verified completion** — the folder is compared before and after each turn, and the output files a command names are checked on disk. A command that exits 0 without changing anything is reported as not done, not as success, and the model is sent back to fix it. `indir <request>` exits non-zero when the work could not be verified (`execution.verify = false` turns this off)
 - **Non-blocking UI** — long commands like ffmpeg run in the background
 - **Terminal use** — `indir <request>` runs one request in the current directory and prints the result, with a live one-line indicator while the model or a command works; optional Textual TUI via `--tui` or `ui.mode = "tui"` in config
 

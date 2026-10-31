@@ -52,6 +52,10 @@ def _render(event: AgentEvent, out: TextIO, err: TextIO) -> int:
 
     if event.type == EventType.COMMAND_RESULT:
         exit_code, body = _command_result_parts(event.content)
+        if event.note:
+            # Say why nothing was asked: an unprompted command must never look
+            # like the user approved it.
+            err.write(f"InDir: {event.note}\n")
         out.write(f"$ {event.command}\n")
         if body:
             out.write(_indent(body) + "\n")
@@ -67,6 +71,14 @@ def _render(event: AgentEvent, out: TextIO, err: TextIO) -> int:
         err.write(f"InDir: {event.content}\n")
         return 1
 
+    if event.type == EventType.VERIFICATION:
+        # A failed check is the exit status: this is what stops a script from
+        # treating "the model said it did it" as success.
+        if event.ok is False:
+            err.write(f"InDir: {event.content}\n")
+            return 1
+        return 0
+
     if event.type == EventType.SCOPE_WIDENED:
         err.write(f"InDir: scope widened to the whole folder ({event.content})\n")
         return 0
@@ -75,10 +87,29 @@ def _render(event: AgentEvent, out: TextIO, err: TextIO) -> int:
     return 0
 
 
-def _prompt(command: str, stdin: TextIO, out: TextIO) -> str:
-    """Ask about one command. Returns "y", "n" or "a" (always)."""
+def _prompt(
+    command: str,
+    stdin: TextIO,
+    out: TextIO,
+    *,
+    note: str | None = None,
+    warnings: tuple[str, ...] = (),
+    remember: str | None = None,
+) -> str:
+    """Ask about one command. Returns "y", "n" or "a" (always this kind).
+
+    `remember` names what "always" would cover; it is None for a command the
+    policy will always ask about, and then the option is not offered.
+    """
     out.write(f"\nProposed command:\n{_indent(command)}\n")
-    out.write("Run it? [y]es / [N]o / [a]lways: ")
+    if note:
+        out.write(f"  {note}\n")
+    for warning in warnings:
+        out.write(f"  ! {warning}\n")
+    if remember:
+        out.write("Run it? [y]es / [N]o / [a]lways for this kind: ")
+    else:
+        out.write("Run it? [y]es / [N]o: ")
     out.flush()
     line = stdin.readline()
     if not line:
@@ -87,7 +118,7 @@ def _prompt(command: str, stdin: TextIO, out: TextIO) -> str:
     choice = line.strip().lower()
     if choice.startswith("y"):
         return "y"
-    if choice.startswith("a"):
+    if choice.startswith("a") and remember:
         return "a"
     return "n"
 
@@ -128,6 +159,8 @@ def run_request(
         return 1
 
     session = AgentSession(directory, config, backend, focus_file=focus_file)
+    # --yes and auto mode approve everything up front; smart mode is handled by
+    # the session's approval policy, which still stops for guarded commands.
     always = assume_yes or config.execution.mode == "auto"
 
     # A live indicator while waiting, so a slow model or ffmpeg run does not look
@@ -149,6 +182,8 @@ def run_request(
     status = 0
     while True:
         for event in events:
+            # Flush per event so a piped run reads in the order it happened.
+            out_stream.flush()
             if _render(event, out_stream, err_stream):
                 status = 1
         # Flush before anything goes to stderr, so a piped run reads in order.
@@ -167,13 +202,30 @@ def run_request(
                     "Re-run with --yes to approve commands up front.\n"
                 )
                 return 1
+            remember = (
+                next_command.kind
+                if next_command.grantable and next_command.kind
+                else None
+            )
             choice = (
                 ask(next_command.command)
                 if ask is not None
-                else _prompt(next_command.command, in_stream, out_stream)
+                else _prompt(
+                    next_command.command,
+                    in_stream,
+                    out_stream,
+                    note=next_command.reason or None,
+                    warnings=next_command.warnings,
+                    remember=remember,
+                )
             )
+            # "a" remembers this kind of write, not every command in the run:
+            # a conversion should not pre-approve a deletion three turns later.
             if choice == "a":
-                always = True
+                session.remember(next_command.kind)
+                err_stream.write(
+                    f"InDir: won't ask again — {next_command.reason}.\n"
+                )
             elif choice != "y":
                 err_stream.write("InDir: command skipped.\n")
                 try:

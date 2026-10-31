@@ -100,11 +100,17 @@ class BackendConfig:
 
 @dataclass
 class ExecutionConfig:
-    mode: str = "confirm"
+    # "smart" asks only about commands that write: read-only inspection runs
+    # without a prompt, routine writes are remembered per chat, and anything
+    # destructive or outside the folder always asks. "confirm" asks about
+    # everything; "auto" asks about nothing.
+    mode: str = "smart"
     blocklist: list[str] = field(
         default_factory=lambda: ["rm -rf /", "mkfs", ":(){ :|:& };:"]
     )
     max_output_bytes: int = 65536
+    # Check the filesystem after each turn instead of trusting the reply.
+    verify: bool = True
 
 
 @dataclass
@@ -145,12 +151,13 @@ def _dict_to_config(data: dict) -> AppConfig:
             opencode=OpenCodeConfig(**backend_data.get("opencode", {})),
         ),
         execution=ExecutionConfig(
-            mode=execution_data.get("mode", "confirm"),
+            mode=execution_data.get("mode", "smart"),
             blocklist=execution_data.get(
                 "blocklist",
                 ["rm -rf /", "mkfs", ":(){ :|:& };:"],
             ),
             max_output_bytes=execution_data.get("max_output_bytes", 65536),
+            verify=bool(execution_data.get("verify", True)),
         ),
         ui=UIConfig(mode=ui_data.get("mode", "qt")),
     )
@@ -232,6 +239,7 @@ def config_to_toml(config: AppConfig) -> str:
         f"mode = {_toml_string(config.execution.mode)}",
         f"blocklist = {_toml_list(config.execution.blocklist)}",
         f"max_output_bytes = {config.execution.max_output_bytes}",
+        f"verify = {_toml_bool(getattr(config.execution, 'verify', True))}",
         "",
         "[ui]",
         f"mode = {_toml_string(config.ui.mode)}",

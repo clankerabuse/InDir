@@ -36,8 +36,10 @@ def test_agent_empty_assistant_text_gets_summary(httpx_mock, tmp_path: Path) -> 
     events = session.send_user_message("say hello")
 
     text = [e for e in events if e.type == EventType.ASSISTANT_TEXT]
-    assert len(text) == 1
-    assert "echo hello" in text[0].content
+    assert any("echo hello" in e.content for e in text)
+    # `echo` is read-only, so it runs without an approval prompt.
+    results = [e for e in events if e.type == EventType.COMMAND_RESULT]
+    assert results and results[0].note and "without asking" in results[0].note
 
 
 @pytest.mark.httpx_mock(assert_all_requests_were_expected=False)
