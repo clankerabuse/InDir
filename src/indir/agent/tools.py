@@ -132,6 +132,14 @@ def run_command(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            # Output is not guaranteed to be UTF-8: a latin-1 text file, a
+            # filename with stray bytes, a tool writing binary to stderr. Strict
+            # decoding raised UnicodeDecodeError out of communicate() after the
+            # command had already run, losing its exit code and its output (and,
+            # in the CLI, the whole turn to a traceback). Replace the offending
+            # bytes instead and report the rest.
+            encoding="utf-8",
+            errors="replace",
         )
     except OSError as exc:
         return CommandResult(
