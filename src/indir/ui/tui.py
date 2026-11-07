@@ -161,12 +161,6 @@ class DirectoryAITApp(App):
         scroll.scroll_end(animate=False)
 
     def _show_command_panel(self, tool_call_id: str, command: str) -> None:
-        self._pending_tool_call_id = tool_call_id
-        scroll = self.query_one("#chat-scroll", VerticalScroll)
-        panel = Vertical(id="command-panel")
-        panel.mount(Static(f"Proposed command:\n{command}"))
-        run_btn = Button("Run", id="run-cmd", variant="primary")
-        cancel_btn = Button("Cancel", id="cancel-cmd")
         pending = next(
             (
                 p
@@ -175,6 +169,17 @@ class DirectoryAITApp(App):
             ),
             None,
         )
+        if pending is not None:
+            # A command the provider filed under no usable id still has to be
+            # answerable; adopt the id the session is holding it under.
+            tool_call_id = pending.tool_call_id
+            command = command or pending.command
+        self._pending_tool_call_id = tool_call_id
+        scroll = self.query_one("#chat-scroll", VerticalScroll)
+        panel = Vertical(id="command-panel")
+        panel.mount(Static(f"Proposed command:\n{command}"))
+        run_btn = Button("Run", id="run-cmd", variant="primary")
+        cancel_btn = Button("Cancel", id="cancel-cmd")
         if pending is not None and pending.grantable:
             # Only a routine write can be remembered; a destructive command is
             # approved one run at a time.
@@ -185,11 +190,30 @@ class DirectoryAITApp(App):
         scroll.scroll_end(animate=False)
         self._pending_command = command
 
+    def _pending_request(self) -> tuple[str, str] | None:
+        """The command the Run/Cancel buttons belong to, or None.
+
+        Same rule as the window: an id the session does not know is not an
+        excuse to ignore the click, and a command filed under no id falls back
+        to the newest pending one.
+        """
+        pending = self.session.pending_commands if self.session else []
+        wanted = self._pending_tool_call_id
+        entry = None
+        if wanted:
+            entry = next((p for p in pending if p.tool_call_id == wanted), None)
+        if entry is None and pending:
+            entry = pending[-1]
+        if entry is None:
+            return None
+        return entry.tool_call_id, getattr(self, "_pending_command", "") or entry.command
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if not self._pending_tool_call_id:
+        request = self._pending_request()
+        if request is None:
+            self._add_message("Nothing is waiting for approval.", "system-msg")
             return
-        tool_call_id = self._pending_tool_call_id
-        command = getattr(self, "_pending_command", "")
+        tool_call_id, command = request
 
         if event.button.id in {"run-cmd", "always-cmd"}:
             always = event.button.id == "always-cmd"

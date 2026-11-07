@@ -5,7 +5,13 @@ from typing import Any
 
 import httpx
 
-from indir.backends.base import ChatBackend, ChatMessage, ChatResponse, ToolCall
+from indir.backends.base import (
+    ChatBackend,
+    ChatMessage,
+    ChatResponse,
+    ToolCall,
+    ensure_tool_call_id,
+)
 from indir.backends.model_catalog import (
     OPENCODE_SESSION_HEADER,
     is_opencode_gateway,
@@ -108,7 +114,7 @@ class OpenAICompatBackend(ChatBackend):
                 args = json.loads(args)
             tool_calls.append(
                 ToolCall(
-                    id=tc.get("id", ""),
+                    id=ensure_tool_call_id(tc.get("id")),
                     name=fn.get("name", ""),
                     arguments=args,
                 )

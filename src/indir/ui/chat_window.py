@@ -1623,15 +1623,17 @@ class ChatWindow(QMainWindow):
             item = self.approval_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        pending = self._pending_entry(tool_call_id)
+        # A command whose event carried no id (some providers omit it) still has
+        # to be answerable: adopt the id the session filed it under.
+        if pending is not None:
+            tool_call_id = pending.tool_call_id
+            command = command or pending.command
         self._pending_tool_call_id = tool_call_id
         self._command_preview = CommandPreviewWidget(command)
         self.approval_layout.addWidget(self._command_preview)
         # "Always" is only offered for a write the policy is willing to
         # remember; a destructive command has to be approved every time.
-        pending = next(
-            (p for p in (self.session.pending_commands if self.session else []) if p.tool_call_id == tool_call_id),
-            None,
-        )
         self.always_btn.setVisible(bool(pending and pending.grantable))
         self.approval_host.show()
         self._show_composer_approval()
@@ -1676,12 +1678,26 @@ class ChatWindow(QMainWindow):
             self.message_panel.hide_thinking_indicator()
         self.status_label.setText(message or self._idle_status())
 
+    def _notify(self, text: str) -> None:
+        """Say something in-window. A refused click must never look like a dead one."""
+        self.status_label.setText(text)
+        self.toast.show_message(text)
+
     def _worker_running(self) -> bool:
         return self.worker is not None and self.worker.isRunning()
 
-    def _start_worker(self, task: str, busy_message: str, **kwargs) -> None:
-        if self._worker_running() or self.session is None:
-            return
+    def _start_worker(self, task: str, busy_message: str, **kwargs) -> bool:
+        """Start session work, or explain why it did not start.
+
+        Returns False instead of returning silently: a click that starts
+        nothing has to say so, or it reads as a broken button.
+        """
+        if self.session is None:
+            self._notify("No backend configured — open the gear icon and pick a provider.")
+            return False
+        if self._worker_running():
+            self._notify("Still working on the last action — try again in a moment.")
+            return False
         self._stopping = False
         self._stop_status_timer.stop()
         self.session.clear_cancel()
@@ -1691,6 +1707,7 @@ class ChatWindow(QMainWindow):
         self.worker.error.connect(self._on_worker_error)
         self.worker.finished.connect(self._on_worker_finished)
         self.worker.start()
+        return True
 
     def _on_stop(self) -> None:
         if not self._worker_running() or self.session is None:
@@ -1716,6 +1733,45 @@ class ChatWindow(QMainWindow):
         self._set_busy(False, "")
         if self.session is not None:
             self.session.clear_cancel()
+        self._restore_pending_approval()
+
+    def _restore_pending_approval(self) -> None:
+        """Never leave a command the session is holding without a way to answer it.
+
+        A command can outlive its card (a lost event, a stale id); putting the
+        card back beats a chat that quietly waits for a click that can't happen.
+        """
+        if self.session is None:
+            return
+        if self._pending_tool_call_id:
+            # The card is up; its buttons may not be (the user chose "Type").
+            if (
+                self.approval_actions.isHidden()
+                and not self._worker_running()
+                and not self.input_box.toPlainText().strip()
+            ):
+                self._show_composer_approval()
+            return
+        pending = self.session.pending_commands
+        if not pending:
+            return
+        newest = pending[-1]
+        self._show_command_preview(newest.tool_call_id, newest.command)
+
+    def _pending_entry(self, tool_call_id: str | None = None):
+        """The pending command the window is showing, or the newest one it has.
+
+        Every approval path resolves the command through here: a stale or empty
+        id used to leave an enabled Approve button wired to nothing, and the
+        click then vanished without a word.
+        """
+        pending = self.session.pending_commands if self.session is not None else []
+        wanted = self._pending_tool_call_id if tool_call_id is None else tool_call_id
+        if wanted:
+            for entry in pending:
+                if entry.tool_call_id == wanted:
+                    return entry
+        return pending[-1] if pending else None
 
     def _on_send(self) -> None:
         text = self.input_box.toPlainText().strip()
@@ -1770,45 +1826,50 @@ class ChatWindow(QMainWindow):
                 self._append_background("Check", event.content)
 
     def _on_approve_command(self) -> None:
-        if not self._pending_tool_call_id or self._worker_running():
-            return
-        if not self._require_backend():
-            return
-        command = self._command_preview.command_text() if self._command_preview else ""
-        tool_call_id = self._pending_tool_call_id
-        self._clear_approval()
-        self._start_worker(
-            "approve",
-            "Running command…",
-            tool_call_id=tool_call_id,
-            command=command,
-        )
+        self._act_on_pending("approve", "Running command…")
 
     def _on_always_command(self) -> None:
         """Approve this command and stop asking about its kind in this chat."""
-        if not self._pending_tool_call_id or self._worker_running():
-            return
-        if not self._require_backend():
-            return
-        command = self._command_preview.command_text() if self._command_preview else ""
-        tool_call_id = self._pending_tool_call_id
-        self._clear_approval()
-        self._start_worker(
-            "approve",
-            "Running command…",
-            tool_call_id=tool_call_id,
-            command=command,
-            always=True,
-        )
+        self._act_on_pending("approve", "Running command…", always=True)
 
     def _on_deny_command(self) -> None:
-        if not self._pending_tool_call_id or self._worker_running():
-            return
-        if not self._require_backend():
-            return
-        tool_call_id = self._pending_tool_call_id
-        self._clear_approval()
-        self._start_worker("reject", "Thinking…", tool_call_id=tool_call_id)
+        self._act_on_pending("reject", "Thinking…")
+
+    def _command_to_run(self, fallback: str) -> str:
+        """The command as the user left it in the preview, or the session's copy."""
+        if self._command_preview is None:
+            return fallback
+        edited = self._command_preview.command_text().strip()
+        return edited or fallback
+
+    def _act_on_pending(self, task: str, busy_message: str, *, always: bool = False) -> None:
+        """Approve or deny the command in front of the user — never silently.
+
+        Every path either starts work or says in-window why it could not. The
+        handlers used to return early on a missing id or a busy worker, which
+        left the card on screen and swallowed the click; an exception raised in
+        a Qt slot vanishes the same way, so those are reported too.
+        """
+        try:
+            pending = self._pending_entry()
+            if pending is None:
+                self._clear_approval()
+                self._notify("There is no command waiting for approval.")
+                return
+            kwargs: dict = {"tool_call_id": pending.tool_call_id}
+            if task == "approve":
+                kwargs["command"] = self._command_to_run(pending.command)
+                kwargs["always"] = always
+            if not self._require_backend():
+                return
+            if not self._start_worker(task, busy_message, **kwargs):
+                return  # _start_worker already said why; the card stays up
+            self._clear_approval()
+        except Exception as exc:  # noqa: BLE001 - a silent slot ate these before
+            self.message_panel.append_assistant(
+                f"Could not {task} the command: {exc}", error=True
+            )
+            self.status_label.setText(f"Could not {task} the command.")
 
     def _on_type_mode(self) -> None:
         if self._pending_tool_call_id is None:
@@ -1816,6 +1877,23 @@ class ChatWindow(QMainWindow):
             return
         self._show_composer_input()
         self.status_label.setText("Type a message, or edit the command above and approve.")
+
+    def closeEvent(self, event) -> None:  # noqa: N802 (Qt override)
+        """Let in-flight work stop before the window goes away.
+
+        A SessionWorker still running when the window is destroyed aborts the
+        process ("QThread: Destroyed while thread is still running"), so closing
+        mid-command used to kill InDir with nothing on screen.
+        """
+        if self.session is not None:
+            try:
+                self.session.request_cancel()
+            except Exception:  # noqa: BLE001 - closing must never raise
+                pass
+        worker = self.worker
+        if worker is not None and worker.isRunning():
+            worker.wait(5000)
+        super().closeEvent(event)
 
 
 # Linux caps a unix socket path at 108 bytes (sun_path, including the NUL), and

@@ -5,7 +5,13 @@ from typing import Any
 
 import httpx
 
-from indir.backends.base import ChatBackend, ChatMessage, ChatResponse, ToolCall
+from indir.backends.base import (
+    ChatBackend,
+    ChatMessage,
+    ChatResponse,
+    ToolCall,
+    ensure_tool_call_id,
+)
 from indir.config import AnthropicConfig
 
 
@@ -122,7 +128,7 @@ class AnthropicBackend(ChatBackend):
             elif block.get("type") == "tool_use":
                 tool_calls.append(
                     ToolCall(
-                        id=block.get("id", ""),
+                        id=ensure_tool_call_id(block.get("id")),
                         name=block.get("name", ""),
                         arguments=block.get("input", {}),
                     )

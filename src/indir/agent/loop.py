@@ -15,7 +15,13 @@ from indir.agent.tools import (
 )
 from indir.agent.policy import ApprovalPolicy, Risk
 from indir.agent.verify import TurnVerifier, closing_is_a_claim, correction_prompt
-from indir.backends.base import TOOL_DEFINITIONS, WIDEN_SCOPE_TOOL, ChatBackend, ChatMessage
+from indir.backends.base import (
+    TOOL_DEFINITIONS,
+    WIDEN_SCOPE_TOOL,
+    ChatBackend,
+    ChatMessage,
+    new_tool_call_id,
+)
 from indir.config import AppConfig
 from indir.context import build_directory_summary, build_system_prompt, resolve_run_command
 
@@ -286,6 +292,9 @@ class AgentSession:
         return None
 
     def _execute_tool(self, name: str, arguments: dict, tool_call_id: str) -> AgentEvent | None:
+        # No id means no way to answer this call — the approval button, the
+        # tool-result message and the pending list all key off it.
+        tool_call_id = tool_call_id or new_tool_call_id()
         if name == "list_directory":
             if self._verifier is not None:
                 self._verifier.record_inspection()
@@ -569,6 +578,13 @@ class AgentSession:
 
             saw_list = False
             command_failed = False
+            # Providers are supposed to identify every tool call; a few omit the
+            # id (or send null), which used to produce an approval card no click
+            # could answer. Fill it in before anything stores it, so the
+            # assistant message and its tool result keep matching ids.
+            for tc in assistant_msg.tool_calls:
+                if not getattr(tc, "id", ""):
+                    tc.id = new_tool_call_id()
             for tc in assistant_msg.tool_calls:
                 if self.is_cancelled():
                     events.append(self._cancelled_event())

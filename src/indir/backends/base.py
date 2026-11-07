@@ -1,7 +1,25 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def new_tool_call_id() -> str:
+    """An identifier for a tool call the provider did not identify.
+
+    OpenAI-compatible servers and some proxies omit ``id`` (or send null) on
+    tool calls. Everything downstream — the tool-result message, the pending
+    command list, the approval button — is keyed by this string, so an empty
+    one leaves a command nothing can answer.
+    """
+    return f"call_{uuid.uuid4().hex[:24]}"
+
+
+def ensure_tool_call_id(value: Any) -> str:
+    """Whatever the provider sent, or a fresh id when it sent nothing."""
+    text = value if isinstance(value, str) else ""
+    return text.strip() or new_tool_call_id()
 
 
 @dataclass
