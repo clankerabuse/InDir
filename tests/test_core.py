@@ -184,3 +184,20 @@ def test_run_command_success(tmp_path: Path) -> None:
     result = run_command(tmp_path, "echo hello", config)
     assert result.returncode == 0
     assert "hello" in result.stdout
+
+
+def test_run_command_survives_output_that_is_not_utf8(tmp_path: Path) -> None:
+    """A command that emits raw non-UTF-8 bytes must still return a result.
+
+    Triggers: `cat` of a latin-1 text file, `ls` in a directory holding a name
+    with stray bytes, a tool that writes binary to stderr. Strict decoding
+    raised UnicodeDecodeError out of communicate(), losing the exit code and the
+    output of a command that had already run.
+    """
+    config = ExecutionConfig()
+    result = run_command(
+        tmp_path, r"printf 'caf\351\n'; printf 'err\377\n' >&2", config
+    )
+    assert result.returncode == 0
+    assert result.stdout.startswith("caf")
+    assert result.stderr.startswith("err")
